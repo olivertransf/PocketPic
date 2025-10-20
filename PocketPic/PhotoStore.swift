@@ -8,10 +8,7 @@
 import SwiftUI
 import Foundation
 import Combine
-
-#if canImport(UIKit)
 import Photos
-#endif
 
 struct Photo: Identifiable, Codable {
     let id: UUID
@@ -113,13 +110,38 @@ class PhotoStore: ObservableObject {
             loadLocalPhotos()
         }
         #elseif canImport(AppKit)
-        print("macOS: loading local photos")
-        loadLocalPhotos()
+        // macOS also has access to Photos library
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        print("macOS Photos permission status: \(status.rawValue)")
+        
+        switch status {
+        case .authorized, .limited:
+            print("macOS Photos permission granted, fetching from album")
+            fetchPhotosFromAlbum()
+        case .notDetermined:
+            print("macOS Photos permission not determined, requesting...")
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { (status: PHAuthorizationStatus) in
+                DispatchQueue.main.async {
+                    print("macOS Photos permission result: \(status.rawValue)")
+                    if status == .authorized || status == .limited {
+                        self.fetchPhotosFromAlbum()
+                    } else {
+                        print("macOS Photos permission denied, loading local photos")
+                        self.loadLocalPhotos()
+                    }
+                }
+            }
+        case .denied, .restricted:
+            print("macOS Photos permission denied/restricted, loading local photos")
+            loadLocalPhotos()
+        @unknown default:
+            print("Unknown macOS Photos permission status, loading local photos")
+            loadLocalPhotos()
+        }
         #endif
     }
     
     private func fetchPhotosFromAlbum() {
-        #if canImport(UIKit)
         print("Fetching photos from album: \(targetAlbum)")
         
         let fetchOptions = PHFetchOptions()
@@ -155,7 +177,6 @@ class PhotoStore: ObservableObject {
             print("Album '\(targetAlbum)' not found, loading local photos")
             loadLocalPhotos()
         }
-        #endif
     }
     
     private func loadLocalPhotos() {
@@ -175,8 +196,7 @@ class PhotoStore: ObservableObject {
     }
     
     func deletePhoto(_ photo: Photo) {
-        #if canImport(UIKit)
-        // Try to delete from Photos library first
+        // Try to delete from Photos library first (works on both iOS and macOS)
         if let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photo.filename], options: nil).firstObject {
             PHPhotoLibrary.shared().performChanges({
                 PHAssetChangeRequest.deleteAssets([asset] as NSArray)
@@ -186,7 +206,6 @@ class PhotoStore: ObservableObject {
                 }
             })
         }
-        #endif
         
         // Remove local image file
         let imageURL = photosDirectory.appendingPathComponent(photo.filename)
@@ -238,10 +257,38 @@ class PhotoStore: ObservableObject {
         
         return nil
         #elseif canImport(AppKit)
-        // For macOS, load from local storage
+        // PRIORITY: Load from local storage first (original high-quality images)
         let imageURL = photosDirectory.appendingPathComponent(photo.filename)
-        guard let imageData = try? Data(contentsOf: imageURL) else { return nil }
-        return NSImage(data: imageData)
+        if let imageData = try? Data(contentsOf: imageURL),
+           let localImage = NSImage(data: imageData) {
+            print("Loaded high-quality image from local storage: \(imageData.count) bytes")
+            return localImage
+        }
+        
+        // Fallback: Try Photos library (including iCloud) only if local storage fails
+        if let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photo.filename], options: nil).firstObject {
+            let imageManager = PHImageManager.default()
+            let requestOptions = PHImageRequestOptions()
+            requestOptions.isSynchronous = true
+            requestOptions.deliveryMode = .highQualityFormat
+            requestOptions.resizeMode = .none  // Don't resize, get original size
+            requestOptions.isNetworkAccessAllowed = true  // Enable iCloud download
+            requestOptions.version = .original  // Get original version, not edited
+            
+            var resultImage: NSImage?
+            // Request full resolution image for best quality
+            // Note: PHImageManager.requestImage returns different types on macOS vs iOS
+            imageManager.requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .aspectFill, options: requestOptions) { image, _ in
+                // On macOS, PHImageManager returns NSImage directly (not CGImage)
+                resultImage = image
+            }
+            if let photosImage = resultImage {
+                print("Loaded image from Photos library (iCloud): \(photosImage.size)")
+            }
+            return resultImage
+        }
+        
+        return nil
         #endif
     }
     
@@ -294,16 +341,27 @@ class PhotoStore: ObservableObject {
     }
     
     private func saveToPhotosLibrary(image: PlatformImage, albumName: String) {
-        #if canImport(UIKit)
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { (status: PHAuthorizationStatus) in
-            guard status == .authorized || status == .limited else { return }
+            guard status == .authorized || status == .limited else { 
+                print("Photos library authorization denied")
+                return 
+            }
             
             PHPhotoLibrary.shared().performChanges({
                 // Create the asset
                 let assetRequest: PHAssetCreationRequest = PHAssetCreationRequest.forAsset()
-            if let imageData = image.jpegData(compressionQuality: 1.0) {
-                assetRequest.addResource(with: .photo, data: imageData, options: nil)
-            }
+                
+                #if canImport(UIKit)
+                if let imageData = image.jpegData(compressionQuality: 1.0) {
+                    assetRequest.addResource(with: .photo, data: imageData, options: nil)
+                }
+                #elseif canImport(AppKit)
+                if let tiffData = image.tiffRepresentation,
+                   let bitmapImage = NSBitmapImageRep(data: tiffData),
+                   let imageData = bitmapImage.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
+                    assetRequest.addResource(with: .photo, data: imageData, options: nil)
+                }
+                #endif
                 
                 // Get or create the album
                 let albumFetchOptions = PHFetchOptions()
@@ -314,35 +372,21 @@ class PhotoStore: ObservableObject {
                     // Album exists, add to it
                     let albumChangeRequest: PHAssetCollectionChangeRequest? = PHAssetCollectionChangeRequest(for: album)
                     albumChangeRequest?.addAssets([assetRequest.placeholderForCreatedAsset!] as NSArray)
+                    print("Added photo to existing album: \(albumName)")
                 } else {
                     // Create new album
                     let albumChangeRequest: PHAssetCollectionChangeRequest? = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumName)
                     albumChangeRequest?.addAssets([assetRequest.placeholderForCreatedAsset!] as NSArray)
+                    print("Created new album and added photo: \(albumName)")
                 }
             }, completionHandler: { success, error in
                 if let error = error {
                     print("Error saving to Photos library: \(error)")
+                } else if success {
+                    print("Successfully saved photo to Photos library album: \(albumName)")
                 }
             })
         }
-        #elseif canImport(AppKit)
-        // For macOS, we'll save to the user's Pictures folder with the album name
-        let picturesURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
-        let albumURL = picturesURL.appendingPathComponent(albumName, isDirectory: true)
-        
-        // Create album directory if it doesn't exist
-        try? FileManager.default.createDirectory(at: albumURL, withIntermediateDirectories: true)
-        
-        // Save image to album directory
-        let filename = "\(UUID().uuidString).jpg"
-        let imageURL = albumURL.appendingPathComponent(filename)
-        
-        if let tiffData = image.tiffRepresentation,
-           let bitmapImage = NSBitmapImageRep(data: tiffData),
-           let imageData = bitmapImage.representation(using: .jpeg, properties: [.compressionFactor: 0.9]) {
-            try? imageData.write(to: imageURL)
-        }
-        #endif
     }
     
     private func saveMetadata() {

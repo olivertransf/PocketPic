@@ -14,5 +14,7 @@
 	<array>
 		<string>CloudKit</string>
 	</array>
+	<key>com.apple.security.personal-information.photos-library</key>
+	<true/>
 </dict>
 </plist>

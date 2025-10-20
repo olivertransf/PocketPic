@@ -9,11 +9,17 @@ import SwiftUI
 import AVFoundation
 import Combine
 
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
 struct CameraView: View {
     @EnvironmentObject var photoStore: PhotoStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var cameraController = CameraController()
-    @State private var capturedImage: UIImage?
+    @State private var capturedImage: PlatformImage?
     @State private var showCapturedImage = false
     @State private var showOverlay = false
     let onDismiss: (() -> Void)?
@@ -35,7 +41,9 @@ struct CameraView: View {
             onSave: savePhoto
         )
         .ignoresSafeArea()
+        #if canImport(UIKit)
         .statusBarHidden()
+        #endif
         .onAppear {
             cameraController.startSession()
         }
@@ -44,7 +52,7 @@ struct CameraView: View {
         }
     }
     
-    private func getLastPhotoImage() -> UIImage? {
+    private func getLastPhotoImage() -> PlatformImage? {
         guard let lastPhoto = photoStore.getLastPhoto() else { return nil }
         return photoStore.loadImage(for: lastPhoto)
     }
@@ -71,7 +79,7 @@ struct CameraView: View {
 class CameraController: NSObject, ObservableObject {
     let captureSession = AVCaptureSession()
     private let photoOutput = AVCapturePhotoOutput()
-    private var captureCompletion: ((UIImage?) -> Void)?
+    private var captureCompletion: ((PlatformImage?) -> Void)?
     private var isSetup = false
     var deviceInput: AVCaptureDeviceInput?
     
@@ -83,9 +91,7 @@ class CameraController: NSObject, ObservableObject {
         if captureSession.isRunning {
             captureSession.stopRunning()
         }
-        #if canImport(UIKit)
         NotificationCenter.default.removeObserver(self)
-        #endif
     }
     
     func startSession() {
@@ -121,6 +127,7 @@ class CameraController: NSObject, ObservableObject {
             return .portrait
         }
         #else
+        // macOS doesn't have device orientation
         return .portrait
         #endif
     }
@@ -135,6 +142,7 @@ class CameraController: NSObject, ObservableObject {
             self?.updateVideoOrientation()
         }
         #endif
+        // macOS doesn't need orientation observer
     }
     
     private func updateVideoOrientation() {
@@ -150,12 +158,14 @@ class CameraController: NSObject, ObservableObject {
         
         captureSession.beginConfiguration()
         
-        // Use .photo preset for maximum photo quality
-        // This gives us the highest resolution available for photo capture
-        if captureSession.canSetSessionPreset(.photo) {
-            captureSession.sessionPreset = .photo  // Maximum photo quality
+        // Use 1920x1080 (Full HD) preset for consistent resolution across ALL platforms
+        // This ensures overlays taken on one platform will match perfectly on another
+        if captureSession.canSetSessionPreset(.hd1920x1080) {
+            captureSession.sessionPreset = .hd1920x1080  // 1920x1080 Full HD
+            print("Camera: Using 1920x1080 preset for consistent overlay matching")
         } else if captureSession.canSetSessionPreset(.high) {
             captureSession.sessionPreset = .high
+            print("Camera: Fallback to .high preset")
         }
         
         // Front camera for selfies
@@ -241,7 +251,7 @@ class CameraController: NSObject, ObservableObject {
         }
     }
     
-    func capturePhoto(completion: @escaping (UIImage?) -> Void) {
+    func capturePhoto(completion: @escaping (PlatformImage?) -> Void) {
         captureCompletion = completion
         
         // Create maximum quality photo settings
@@ -254,9 +264,12 @@ class CameraController: NSObject, ObservableObject {
             settings = AVCapturePhotoSettings()
         }
         
-        // Enable all quality enhancements
-        settings.isHighResolutionPhotoEnabled = photoOutput.isHighResolutionCaptureEnabled
+        // Force 1920x1080 resolution by disabling high resolution capture
+        // This ensures consistent resolution across all platforms for overlay matching
+        settings.isHighResolutionPhotoEnabled = false
+        #if canImport(UIKit)
         settings.isAutoStillImageStabilizationEnabled = photoOutput.isStillImageStabilizationSupported
+        #endif
         settings.flashMode = .off // Front camera doesn't have flash
         
         // Set maximum quality prioritization
@@ -267,14 +280,18 @@ class CameraController: NSObject, ObservableObject {
         // Debug: Log the settings being used
         print("Photo capture settings:")
         print("- High resolution enabled: \(settings.isHighResolutionPhotoEnabled)")
+        #if canImport(UIKit)
         print("- Auto stabilization: \(settings.isAutoStillImageStabilizationEnabled)")
+        #endif
         print("- Quality prioritization: \(settings.photoQualityPrioritization.rawValue)")
         print("- Format: \(settings.format)")
         
+        #if canImport(UIKit)
         // Set orientation based on device orientation
         if let photoOutputConnection = photoOutput.connection(with: .video) {
             photoOutputConnection.videoOrientation = videoOrientation(from: UIDevice.current.orientation)
         }
+        #endif
         
         photoOutput.capturePhoto(with: settings, delegate: self)
     }
@@ -290,6 +307,7 @@ class CameraController: NSObject, ObservableObject {
         }
     }
     
+    #if canImport(UIKit)
     private func videoOrientation(from deviceOrientation: UIDeviceOrientation) -> AVCaptureVideoOrientation {
         switch deviceOrientation {
         case .portrait:
@@ -304,14 +322,33 @@ class CameraController: NSObject, ObservableObject {
             return .portrait
         }
     }
+    #endif
 }
 
 // MARK: - Photo Capture Delegate
 
 extension CameraController: AVCapturePhotoCaptureDelegate {
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        guard let imageData = photo.fileDataRepresentation(),
-              let image = UIImage(data: imageData) else {
+        guard let imageData = photo.fileDataRepresentation() else {
+            captureCompletion?(nil)
+            return
+        }
+        
+        #if canImport(UIKit)
+        guard let image = UIImage(data: imageData) else {
+            captureCompletion?(nil)
+            return
+        }
+        
+        // Debug: Log the captured image details (match macOS format)
+        print("Captured photo:")
+        print("- Image size: \(image.size)")
+        print("- Data size: \(imageData.count) bytes")
+        
+        captureCompletion?(image)
+        
+        #elseif canImport(AppKit)
+        guard let image = NSImage(data: imageData) else {
             captureCompletion?(nil)
             return
         }
@@ -319,22 +356,22 @@ extension CameraController: AVCapturePhotoCaptureDelegate {
         // Debug: Log the captured image details
         print("Captured photo:")
         print("- Image size: \(image.size)")
-        print("- Image scale: \(image.scale)")
         print("- Data size: \(imageData.count) bytes")
-        print("- Actual resolution: \(image.size.width * image.scale) x \(image.size.height * image.scale)")
         
         captureCompletion?(image)
+        #endif
     }
 }
 
 // MARK: - Camera View Wrapper
 
+#if canImport(UIKit)
 struct CameraViewWrapper: UIViewRepresentable {
     let cameraController: CameraController
-    @Binding var capturedImage: UIImage?
+    @Binding var capturedImage: PlatformImage?
     @Binding var showCapturedImage: Bool
     @Binding var showOverlay: Bool
-    let lastPhotoImage: UIImage?
+    let lastPhotoImage: PlatformImage?
     let overlayOpacity: Double
     let onDismiss: () -> Void
     let onCapture: () -> Void
@@ -366,6 +403,46 @@ struct CameraViewWrapper: UIViewRepresentable {
     }
 }
 
+#elseif canImport(AppKit)
+struct CameraViewWrapper: NSViewRepresentable {
+    let cameraController: CameraController
+    @Binding var capturedImage: PlatformImage?
+    @Binding var showCapturedImage: Bool
+    @Binding var showOverlay: Bool
+    let lastPhotoImage: PlatformImage?
+    let overlayOpacity: Double
+    let onDismiss: () -> Void
+    let onCapture: () -> Void
+    let onSave: () -> Void
+    
+    func makeNSView(context: Context) -> CameraContainerView {
+        let container = CameraContainerView()
+        container.setupCamera(cameraController: cameraController)
+        container.onDismiss = onDismiss
+        container.onCapture = onCapture
+        container.onSave = onSave
+        container.capturedImage = capturedImage
+        container.showCapturedImage = showCapturedImage
+        container.lastPhotoImage = lastPhotoImage
+        container.showOverlay = showOverlay
+        container.overlayOpacity = overlayOpacity
+        container.onToggleOverlay = {
+            self.$showOverlay.wrappedValue.toggle()
+        }
+        return container
+    }
+    
+    func updateNSView(_ nsView: CameraContainerView, context: Context) {
+        nsView.capturedImage = capturedImage
+        nsView.showCapturedImage = showCapturedImage
+        nsView.showOverlay = showOverlay
+        nsView.overlayOpacity = overlayOpacity
+        nsView.updateUI()
+    }
+}
+#endif
+
+#if canImport(UIKit)
 class CameraContainerView: UIView {
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var cameraController: CameraController?
@@ -445,7 +522,7 @@ class CameraContainerView: UIView {
     func setupCamera(cameraController: CameraController) {
         self.cameraController = cameraController
         let layer = AVCaptureVideoPreviewLayer(session: cameraController.captureSession)
-        layer.videoGravity = .resizeAspectFill
+        layer.videoGravity = .resizeAspect  // Fit full feed without cropping
         
         // Ensure the layer connection is properly configured
         if let connection = layer.connection, connection.isVideoOrientationSupported {
@@ -787,4 +864,262 @@ class CameraContainerView: UIView {
         overlayImageView?.alpha = CGFloat(overlayOpacity)
     }
 }
+#endif
 
+// MARK: - macOS Camera Container View
+
+#if canImport(AppKit)
+class CameraContainerView: NSView {
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var cameraController: CameraController?
+    private var closeButton: NSButton!
+    private var captureButton: NSButton!
+    private var retakeButton: NSButton!
+    private var saveButton: NSButton!
+    private var imageView: NSImageView!
+    private var overlayImageView: NSImageView!
+    private var overlayToggleButton: NSButton!
+    
+    var onDismiss: (() -> Void)?
+    var onCapture: (() -> Void)?
+    var onSave: (() -> Void)?
+    var onToggleOverlay: (() -> Void)?
+    var overlayOpacity: Double = 0.4 {
+        didSet {
+            updateOverlayOpacity()
+        }
+    }
+    
+    var capturedImage: NSImage? {
+        didSet {
+            updateUI()
+        }
+    }
+    
+    var showCapturedImage: Bool = false {
+        didSet {
+            updateUI()
+        }
+    }
+    
+    var showOverlay: Bool = false {
+        didSet {
+            updateUI()
+        }
+    }
+    
+    var lastPhotoImage: NSImage? {
+        didSet {
+            overlayImageView?.image = lastPhotoImage
+            overlayToggleButton?.isEnabled = lastPhotoImage != nil
+            overlayToggleButton?.alphaValue = lastPhotoImage != nil ? 1.0 : 0.5
+        }
+    }
+    
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupUI()
+    }
+    
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+    
+    func setupCamera(cameraController: CameraController) {
+        self.cameraController = cameraController
+        let layer = AVCaptureVideoPreviewLayer(session: cameraController.captureSession)
+        layer.videoGravity = .resizeAspect  // Fit full feed without cropping
+        
+        if let connection = layer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+        
+        self.wantsLayer = true
+        self.layer?.insertSublayer(layer, at: 0)
+        self.previewLayer = layer
+        
+        DispatchQueue.main.async { [weak self] in
+            self?.updateFrame()
+        }
+    }
+    
+    private func setupUI() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.black.cgColor
+        
+        // Overlay image view for previous photo
+        overlayImageView = NSImageView()
+        overlayImageView.imageScaling = .scaleProportionallyDown  // Fit within bounds like .resizeAspect
+        overlayImageView.alphaValue = 0.4
+        overlayImageView.isHidden = true
+        addSubview(overlayImageView)
+        
+        // Image view for captured photo
+        imageView = NSImageView()
+        imageView.imageScaling = .scaleProportionallyDown  // Fit captured image within bounds
+        imageView.wantsLayer = true
+        imageView.layer?.backgroundColor = NSColor.black.cgColor
+        imageView.isHidden = true
+        addSubview(imageView)
+        
+        // Close button
+        closeButton = NSButton()
+        closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close")
+        closeButton.isBordered = false
+        closeButton.bezelStyle = .rounded
+        closeButton.target = self
+        closeButton.action = #selector(closeTapped)
+        addSubview(closeButton)
+        
+        // Overlay toggle button
+        overlayToggleButton = NSButton()
+        overlayToggleButton.image = NSImage(systemSymbolName: "person.crop.rectangle.stack", accessibilityDescription: "Toggle Overlay")
+        overlayToggleButton.isBordered = false
+        overlayToggleButton.bezelStyle = .rounded
+        overlayToggleButton.target = self
+        overlayToggleButton.action = #selector(overlayToggleTapped)
+        addSubview(overlayToggleButton)
+        
+        // Capture button
+        captureButton = NSButton()
+        captureButton.wantsLayer = true
+        captureButton.layer?.backgroundColor = NSColor.white.cgColor
+        captureButton.layer?.cornerRadius = 35
+        captureButton.layer?.borderWidth = 5
+        captureButton.layer?.borderColor = NSColor.white.withAlphaComponent(0.5).cgColor
+        captureButton.isBordered = false
+        captureButton.target = self
+        captureButton.action = #selector(captureTapped)
+        addSubview(captureButton)
+        
+        // Retake button
+        retakeButton = NSButton(title: "Retake", target: self, action: #selector(retakeTapped))
+        retakeButton.wantsLayer = true
+        retakeButton.bezelStyle = .rounded
+        retakeButton.layer?.backgroundColor = NSColor.systemGray.cgColor
+        retakeButton.layer?.cornerRadius = 10
+        addSubview(retakeButton)
+        
+        // Save button
+        saveButton = NSButton(title: "Use Photo", target: self, action: #selector(saveTapped))
+        saveButton.wantsLayer = true
+        saveButton.bezelStyle = .rounded
+        saveButton.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        saveButton.layer?.cornerRadius = 10
+        addSubview(saveButton)
+        
+        updateUI()
+    }
+    
+    override func layout() {
+        super.layout()
+        updateFrame()
+        updateButtonPositions()
+    }
+    
+    private func updateFrame() {
+        // Simple approach: let videoGravity and imageScaling handle aspect ratio
+        // All layers fill bounds, they'll maintain aspect ratio internally
+        previewLayer?.frame = bounds
+        imageView.frame = bounds
+        overlayImageView.frame = bounds
+        
+        print("macOS Camera: All layers set to bounds: \(bounds)")
+    }
+    
+    private func updateButtonPositions() {
+        let buttonSize: CGFloat = 54
+        let captureButtonSize: CGFloat = 70
+        let margin: CGFloat = 20
+        
+        // Close button - top left corner
+        closeButton.frame = CGRect(x: margin, y: bounds.height - margin - buttonSize, width: buttonSize, height: buttonSize)
+        
+        if !showCapturedImage {
+            // Capture button - bottom center
+            let captureY = margin
+            captureButton.frame = CGRect(
+                x: (bounds.width - captureButtonSize) / 2,
+                y: captureY,
+                width: captureButtonSize,
+                height: captureButtonSize
+            )
+            
+            // Overlay toggle button - to the left of capture button
+            let toggleSpacing: CGFloat = 30
+            let toggleX = captureButton.frame.minX - buttonSize - toggleSpacing
+            overlayToggleButton.frame = CGRect(
+                x: toggleX,
+                y: captureY + (captureButtonSize - buttonSize) / 2,
+                width: buttonSize,
+                height: buttonSize
+            )
+            
+            captureButton.isHidden = false
+            overlayToggleButton.isHidden = false
+            retakeButton.isHidden = true
+            saveButton.isHidden = true
+        } else {
+            // Retake and Save buttons horizontally at bottom
+            let buttonHeight: CGFloat = 50
+            let buttonWidth: CGFloat = 120
+            let spacing: CGFloat = 20
+            let totalWidth = (buttonWidth * 2) + spacing
+            let startX = (bounds.width - totalWidth) / 2
+            let buttonY = margin
+            
+            retakeButton.frame = CGRect(x: startX, y: buttonY, width: buttonWidth, height: buttonHeight)
+            saveButton.frame = CGRect(x: startX + buttonWidth + spacing, y: buttonY, width: buttonWidth, height: buttonHeight)
+            
+            retakeButton.isHidden = false
+            saveButton.isHidden = false
+            captureButton.isHidden = true
+            overlayToggleButton.isHidden = true
+        }
+    }
+    
+    func updateUI() {
+        DispatchQueue.main.async {
+            self.updateButtonPositions()
+            
+            if self.showCapturedImage, let image = self.capturedImage {
+                self.imageView.image = image
+                self.imageView.isHidden = false
+                self.previewLayer?.isHidden = true
+                self.overlayImageView.isHidden = true
+            } else {
+                self.imageView.isHidden = true
+                self.previewLayer?.isHidden = false
+                self.overlayImageView.isHidden = !self.showOverlay || self.lastPhotoImage == nil
+                self.overlayToggleButton.state = self.showOverlay ? .on : .off
+            }
+        }
+    }
+    
+    @objc private func closeTapped() {
+        onDismiss?()
+    }
+    
+    @objc private func captureTapped() {
+        onCapture?()
+    }
+    
+    @objc private func overlayToggleTapped() {
+        onToggleOverlay?()
+    }
+    
+    @objc private func retakeTapped() {
+        showCapturedImage = false
+        capturedImage = nil
+        updateUI()
+    }
+    
+    @objc private func saveTapped() {
+        onSave?()
+    }
+    
+    private func updateOverlayOpacity() {
+        overlayImageView?.alphaValue = CGFloat(overlayOpacity)
+    }
+}
+#endif

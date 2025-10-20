@@ -58,6 +58,7 @@ struct ContentView: View {
                 showCamera = true
             }
         }
+        #if canImport(UIKit)
         .fullScreenCover(isPresented: $showCamera) {
             CameraView(onDismiss: {
                 showCamera = false
@@ -65,6 +66,16 @@ struct ContentView: View {
             })
             .environmentObject(photoStore)
         }
+        #elseif canImport(AppKit)
+        .sheet(isPresented: $showCamera) {
+            CameraView(onDismiss: {
+                showCamera = false
+                selectedTab = 0 // Return to gallery tab
+            })
+            .environmentObject(photoStore)
+            .frame(minWidth: 800, minHeight: 600)
+        }
+        #endif
     }
 }
 

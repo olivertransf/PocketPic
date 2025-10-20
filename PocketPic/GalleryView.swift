@@ -107,6 +107,7 @@ struct GalleryView: View {
             }
             .navigationTitle(isSelectionMode ? "\(selectedPhotos.count) Selected" : "Gallery")
             .toolbar {
+                #if canImport(UIKit)
                 ToolbarItem(placement: .navigationBarLeading) {
                     if isSelectionMode {
                         Button("Cancel") {
@@ -120,6 +121,21 @@ struct GalleryView: View {
                         }
                     }
                 }
+                #elseif canImport(AppKit)
+                ToolbarItem(placement: .navigation) {
+                    if isSelectionMode {
+                        Button("Cancel") {
+                            exitSelectionMode()
+                        }
+                    } else {
+                        Button(action: {
+                            photoStore.refreshPhotos()
+                        }) {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                    }
+                }
+                #endif
                 
                 ToolbarItem(placement: .primaryAction) {
                     HStack(spacing: 16) {
