@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "Journal App Icon Design Oct 18 2025.png",
+      "filename" : "AppIcon~ios-marketing 2.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "Journal App Icon Design Oct 18 2025 (1).png",
+      "filename" : "AppIcon~ios-marketing.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -25,6 +25,7 @@
           "value" : "tinted"
         }
       ],
+      "filename" : "AppIcon~ios-marketing 1.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -70,11 +71,13 @@
       "size" : "256x256"
     },
     {
+      "filename" : "icon-512-maskable.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "512x512"
     },
     {
+      "filename" : "AppIcon~ios-marketing 3.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "512x512"

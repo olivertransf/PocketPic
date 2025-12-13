@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 #if canImport(UIKit)
 import UIKit
@@ -14,3 +15,26 @@ typealias PlatformImage = UIImage
 import AppKit
 typealias PlatformImage = NSImage
 #endif
+
+// Platform-specific color extensions
+extension Color {
+    static var systemBackground: Color {
+        #if canImport(UIKit)
+        return Color(uiColor: .systemBackground)
+        #elseif canImport(AppKit)
+        return Color(nsColor: .controlBackgroundColor)
+        #else
+        return Color.clear
+        #endif
+    }
+    
+    static var systemGroupedBackground: Color {
+        #if canImport(UIKit)
+        return Color(uiColor: .systemGroupedBackground)
+        #elseif canImport(AppKit)
+        return Color(nsColor: .windowBackgroundColor)
+        #else
+        return Color.clear
+        #endif
+    }
+}

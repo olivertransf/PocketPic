@@ -40,8 +40,11 @@ class ExportViewModel: ObservableObject {
         do {
             let videoURL = try await createVideo(from: photos, photoStore: photoStore)
             exportedVideoURL = videoURL
-            showShareSheet = true
             isExporting = false
+            // Signal that share sheet should be shown (will be handled by onChange in GalleryView)
+            await MainActor.run {
+                showShareSheet = true
+            }
         } catch {
             errorMessage = "Failed to create video: \(error.localizedDescription)"
             isExporting = false
@@ -58,7 +61,11 @@ class ExportViewModel: ObservableObject {
         // Remove existing file if needed
         try? FileManager.default.removeItem(at: outputURL)
         
-        // Video settings
+        // Video settings - LANDSCAPE MODE
+        // 1920x1080 (16:9 aspect ratio) is optimal for:
+        // - Standard video formats
+        // - Landscape viewing
+        // - Wide-screen displays
         let videoWidth: Int = 1920
         let videoHeight: Int = 1080
         let fps: Int32 = Int32(selectedFPS)

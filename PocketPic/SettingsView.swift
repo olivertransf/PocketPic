@@ -8,6 +8,12 @@
 import SwiftUI
 import Photos
 
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
 struct SettingsView: View {
     @EnvironmentObject var photoStore: PhotoStore
     @State private var selectedAlbum: String = "PocketPic"
@@ -18,71 +24,195 @@ struct SettingsView: View {
     var body: some View {
         #if canImport(UIKit)
         NavigationStack {
-            Form {
-                Section(header: Text("Photo Storage")) {
-                    HStack {
-                        Text("Save to Album")
-                        Spacer()
-                        Button(selectedAlbum) {
-                            showingAlbumPicker = true
-                        }
-                        .foregroundColor(.blue)
-                    }
-                    
-                    Text("Photos will be saved to the selected album in your Photos library")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Section(header: Text("Camera Overlay")) {
-                    VStack(alignment: .leading, spacing: 8) {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Photo Storage Card
+                    VStack(alignment: .leading, spacing: 16) {
                         HStack {
-                            Text("Overlay Opacity")
-                            Spacer()
-                            Text("\(Int(photoStore.overlayOpacity * 100))%")
-                                .foregroundColor(.secondary)
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [.blue, .purple],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .font(.title3)
+                            Text("Photo Storage")
+                                .font(.headline)
                         }
                         
-                        Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1) {
-                            Text("Opacity")
-                        } minimumValueLabel: {
-                            Text("10%")
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("Save to Album")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Button(selectedAlbum) {
+                                    showingAlbumPicker = true
+                                }
+                                .foregroundColor(.blue)
+                                .fontWeight(.medium)
+                            }
+                            
+                            Text("Photos will be saved to the selected album in your Photos library")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                        } maximumValueLabel: {
-                            Text("100%")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .onChange(of: photoStore.overlayOpacity) { _, newValue in
-                            photoStore.setOverlayOpacity(newValue)
-                        }
-                        
-                        Text("Adjust how transparent the previous photo appears in the camera preview")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        .padding(.leading, 32)
                     }
-                }
-                
-                Section(header: Text("About")) {
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text("1.0.0")
-                            .foregroundColor(.secondary)
-                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
                     
-                    HStack {
-                        Text("Total Photos")
-                        Spacer()
-                        Text("\(photoStore.photos.count)")
-                            .foregroundColor(.secondary)
+                    // Camera Overlay Card
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Image(systemName: "person.crop.rectangle.stack")
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [.blue, .purple],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .font(.title3)
+                            Text("Camera Overlay")
+                                .font(.headline)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack {
+                                Text("Overlay Opacity")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text("\(Int(photoStore.overlayOpacity * 100))%")
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            colors: [.blue, .purple],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .fontWeight(.semibold)
+                            }
+                            
+                            Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1) {
+                                Text("Opacity")
+                            } minimumValueLabel: {
+                                Text("10%")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("100%")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            .tint(
+                                LinearGradient(
+                                    colors: [.blue, .purple],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .onChange(of: photoStore.overlayOpacity) { _, newValue in
+                                photoStore.setOverlayOpacity(newValue)
+                            }
+                            
+                            Text("Adjust how transparent the previous photo appears in the camera preview")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.leading, 32)
                     }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
+                    
+                    // About Card
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [.blue, .purple],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .font(.title3)
+                            Text("About")
+                                .font(.headline)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 12) {
+                            // App Description
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("What is PocketPic?")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                                
+                                Text("PocketPic helps you create time-lapse videos from your selfies. Take consistent photos over time and export them as a beautiful montage video. Perfect for tracking changes, creating memories, or sharing your journey.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            
+                            Divider()
+                            
+                            HStack {
+                                Text("Version")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text("1.0.0")
+                                    .foregroundColor(.secondary)
+                                    .fontWeight(.medium)
+                            }
+                            
+                            Divider()
+                            
+                            HStack {
+                                Text("Total Photos")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text("\(photoStore.photos.count)")
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            colors: [.blue, .purple],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                        .padding(.leading, 32)
+                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
                 }
+                .padding(.vertical)
             }
+            .background(Color.systemGroupedBackground)
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(.large)
             .onAppear {
+                selectedAlbum = photoStore.targetAlbum
                 loadAvailableAlbums()
             }
             .sheet(isPresented: $showingAlbumPicker) {
@@ -102,71 +232,188 @@ struct SettingsView: View {
             }
         }
         #elseif canImport(AppKit)
-        NavigationView {
-            Form {
-                Section(header: Text("Photo Storage")) {
-                    HStack {
-                        Text("Save to Album")
-                        Spacer()
-                        Button(selectedAlbum) {
-                            showingAlbumPicker = true
-                        }
-                        .foregroundColor(.blue)
-                    }
-                    
-                    Text("Photos will be saved to the selected album in your Photos library")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                Section(header: Text("Camera Overlay")) {
-                    VStack(alignment: .leading, spacing: 8) {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Photo Storage Card
+                    VStack(alignment: .leading, spacing: 16) {
                         HStack {
-                            Text("Overlay Opacity")
-                            Spacer()
-                            Text("\(Int(photoStore.overlayOpacity * 100))%")
-                                .foregroundColor(.secondary)
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [.blue, .purple],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .font(.title3)
+                            Text("Photo Storage")
+                                .font(.headline)
                         }
                         
-                        Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1) {
-                            Text("Opacity")
-                        } minimumValueLabel: {
-                            Text("10%")
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("Save to Album")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Button(selectedAlbum) {
+                                    showingAlbumPicker = true
+                                }
+                                .foregroundColor(.blue)
+                                .fontWeight(.medium)
+                            }
+                            
+                            Text("Photos will be saved to the selected album in your Photos library")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                        } maximumValueLabel: {
-                            Text("100%")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .onChange(of: photoStore.overlayOpacity) { _, newValue in
-                            photoStore.setOverlayOpacity(newValue)
-                        }
-                        
-                        Text("Adjust how transparent the previous photo appears in the camera preview")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        .padding(.leading, 32)
                     }
-                }
-                
-                Section(header: Text("About")) {
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text("1.0.0")
-                            .foregroundColor(.secondary)
-                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
                     
-                    HStack {
-                        Text("Total Photos")
-                        Spacer()
-                        Text("\(photoStore.photos.count)")
-                            .foregroundColor(.secondary)
+                    // Camera Overlay Card
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Image(systemName: "person.crop.rectangle.stack")
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [.blue, .purple],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .font(.title3)
+                            Text("Camera Overlay")
+                                .font(.headline)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack {
+                                Text("Overlay Opacity")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text("\(Int(photoStore.overlayOpacity * 100))%")
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            colors: [.blue, .purple],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .fontWeight(.semibold)
+                            }
+                            
+                            Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1) {
+                                Text("Opacity")
+                            } minimumValueLabel: {
+                                Text("10%")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            } maximumValueLabel: {
+                                Text("100%")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            .onChange(of: photoStore.overlayOpacity) { _, newValue in
+                                photoStore.setOverlayOpacity(newValue)
+                            }
+                            
+                            Text("Adjust how transparent the previous photo appears in the camera preview")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.leading, 32)
                     }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
+                    
+                    // About Card
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [.blue, .purple],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .font(.title3)
+                            Text("About")
+                                .font(.headline)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 12) {
+                            // App Description
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("What is PocketPic?")
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.primary)
+                                
+                                Text("PocketPic helps you create time-lapse videos from your selfies. Take consistent photos over time and export them as a beautiful montage video. Perfect for tracking changes, creating memories, or sharing your journey.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            
+                            Divider()
+                            
+                            HStack {
+                                Text("Version")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text("1.0.0")
+                                    .foregroundColor(.secondary)
+                                    .fontWeight(.medium)
+                            }
+                            
+                            Divider()
+                            
+                            HStack {
+                                Text("Total Photos")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text("\(photoStore.photos.count)")
+                                    .foregroundStyle(
+                                        LinearGradient(
+                                            colors: [.blue, .purple],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .fontWeight(.semibold)
+                            }
+                        }
+                        .padding(.leading, 32)
+                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
                 }
+                .padding(.vertical)
             }
+            .background(Color.systemGroupedBackground)
             .navigationTitle("Settings")
             .onAppear {
+                selectedAlbum = photoStore.targetAlbum
                 loadAvailableAlbums()
             }
             .sheet(isPresented: $showingAlbumPicker) {

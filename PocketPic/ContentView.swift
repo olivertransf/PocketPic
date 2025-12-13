@@ -21,40 +21,30 @@ struct ContentView: View {
                 .tag(0)
                 .environmentObject(photoStore)
             
-            Button(action: {
-                showCamera = true
-            }) {
-                VStack {
-                    Image(systemName: "camera.fill")
-                        .font(.system(size: 50))
-                        .foregroundColor(.blue)
-                    Text("Take Selfie")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                }
-            }
-            .tabItem {
-                Label("Camera", systemImage: "camera.fill")
-            }
-            .tag(1)
-            
-            ExportView()
+            // Camera placeholder view - will trigger camera on tap
+            CameraPlaceholderView()
                 .tabItem {
-                    Label("Export", systemImage: "film")
+                    Label("Camera", systemImage: "camera.fill")
                 }
-                .tag(2)
-                .environmentObject(photoStore)
+                .tag(1)
+                .onAppear {
+                    // Automatically open camera when tab is selected
+                    if selectedTab == 1 {
+                        showCamera = true
+                    }
+                }
             
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gear")
                 }
-                .tag(3)
+                .tag(2)
                 .environmentObject(photoStore)
         }
-        .preferredColorScheme(nil) // Adaptive light/dark mode
-        .onChange(of: selectedTab) { newTab in
-            if newTab == 1 { // Camera tab
+        .preferredColorScheme(nil)
+        .onChange(of: selectedTab) { oldValue, newValue in
+            if newValue == 1 && oldValue != 1 {
+                // Only show camera if we're switching TO the camera tab
                 showCamera = true
             }
         }
@@ -79,6 +69,38 @@ struct ContentView: View {
     }
 }
 
+struct CameraPlaceholderView: View {
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            
+            Image(systemName: "camera.fill")
+                .font(.system(size: 60))
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [.blue, .purple],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .symbolEffect(.pulse, options: .repeat(.continuous))
+            
+            Text("Tap to Open Camera")
+                .font(.title2)
+                .fontWeight(.semibold)
+            
+            Text("Take a selfie to add to your collection")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+//        .background(Color(.systemGroupedBackground))
+    }
+}
 
 #Preview {
     ContentView()
