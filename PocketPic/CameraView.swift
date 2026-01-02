@@ -106,8 +106,313 @@ class CameraController: NSObject, ObservableObject {
     private var isSetup = false
     var deviceInput: AVCaptureDeviceInput?
     
+    @Published var availableCameras: [AVCaptureDevice] = []
+    @Published var currentCamera: AVCaptureDevice?
+    
     override init() {
         super.init()
+        requestCameraPermissionAndDiscover()
+        setupDeviceNotifications()
+    }
+    
+    private func requestCameraPermissionAndDiscover() {
+        #if canImport(UIKit)
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            discoverCameras()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.discoverCameras()
+                    } else {
+                        print("Camera permission denied")
+                    }
+                }
+            }
+        case .denied, .restricted:
+            print("Camera permission denied or restricted")
+        @unknown default:
+            print("Unknown camera permission status")
+        }
+        #else
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            discoverCameras()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        self?.discoverCameras()
+                    } else {
+                        print("Camera permission denied")
+                    }
+                }
+            }
+        case .denied, .restricted:
+            print("Camera permission denied or restricted")
+        @unknown default:
+            print("Unknown camera permission status")
+        }
+        #endif
+    }
+    
+    private func discoverCameras() {
+        #if canImport(UIKit)
+        let deviceTypes: [AVCaptureDevice.DeviceType] = [
+            .builtInWideAngleCamera,
+            .builtInUltraWideCamera,
+            .builtInTelephotoCamera
+        ]
+        let discoverySession = AVCaptureDevice.DiscoverySession(
+            deviceTypes: deviceTypes,
+            mediaType: .video,
+            position: .unspecified
+        )
+        let allDevices = discoverySession.devices
+        let discoveredCameras = allDevices.filter { $0.isConnected }
+        #else
+        var allDevices: [AVCaptureDevice] = []
+        
+        var deviceTypes: [AVCaptureDevice.DeviceType] = [
+            .builtInWideAngleCamera
+        ]
+        
+        if #available(macOS 14.0, *) {
+            deviceTypes.append(.external)
+        } else {
+            deviceTypes.append(.externalUnknown)
+        }
+        
+        let discoverySession = AVCaptureDevice.DiscoverySession(
+            deviceTypes: deviceTypes,
+            mediaType: .video,
+            position: .unspecified
+        )
+        
+        allDevices = discoverySession.devices
+        
+        if allDevices.isEmpty {
+            print("Discovery session found no devices, trying alternative methods...")
+            
+            if let defaultDevice = AVCaptureDevice.default(for: .video) {
+                allDevices = [defaultDevice]
+                print("Found default camera: \(defaultDevice.localizedName)")
+            }
+            
+            if allDevices.isEmpty {
+                let allDeviceTypes: [AVCaptureDevice.DeviceType]
+                if #available(macOS 14.0, *) {
+                    allDeviceTypes = [.builtInWideAngleCamera, .external]
+                } else {
+                    allDeviceTypes = [.builtInWideAngleCamera, .externalUnknown]
+                }
+                
+                let fallbackSession = AVCaptureDevice.DiscoverySession(
+                    deviceTypes: allDeviceTypes,
+                    mediaType: .video,
+                    position: .unspecified
+                )
+                allDevices = fallbackSession.devices
+                print("Fallback discovery found: \(allDevices.count) devices")
+            }
+            
+            if allDevices.isEmpty {
+                print("Attempting to enumerate all devices without type filter...")
+                let allVideoSession = AVCaptureDevice.DiscoverySession(
+                    deviceTypes: [.builtInWideAngleCamera],
+                    mediaType: .video,
+                    position: .unspecified
+                )
+                allDevices = allVideoSession.devices
+                print("Basic discovery found: \(allDevices.count) devices")
+            }
+        }
+        
+        let discoveredCameras = allDevices.filter { device in
+            let isConnected = device.isConnected
+            let hasVideo = device.hasMediaType(.video)
+            let notSuspended = !device.isSuspended
+            let notInUse = !device.isInUseByAnotherApplication
+            
+            if !isConnected {
+                print("Device \(device.localizedName) is not connected")
+            }
+            if !hasVideo {
+                print("Device \(device.localizedName) does not support video")
+            }
+            if device.isSuspended {
+                print("Device \(device.localizedName) is suspended")
+            }
+            if device.isInUseByAnotherApplication {
+                print("Device \(device.localizedName) is in use by another application")
+            }
+            
+            return isConnected && hasVideo && notSuspended && notInUse
+        }
+        #endif
+        
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            let hadCameras = !self.availableCameras.isEmpty
+            let previousCamera = self.currentCamera
+            
+            self.availableCameras = discoveredCameras
+            
+            if self.currentCamera == nil || !discoveredCameras.contains(self.currentCamera!) {
+                self.currentCamera = discoveredCameras.first
+                print("Selected camera: \(self.currentCamera?.localizedName ?? "none")")
+            }
+            
+            if !hadCameras && !discoveredCameras.isEmpty && self.currentCamera != nil {
+                if !self.isSetup {
+                    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                        guard let self = self else { return }
+                        self.setupCameraSync()
+                        if self.isSetup && !self.captureSession.isRunning {
+                            self.captureSession.startRunning()
+                        }
+                    }
+                }
+            }
+            
+            if discoveredCameras.isEmpty {
+                print("Warning: No cameras discovered.")
+                print("Camera permission status: \(AVCaptureDevice.authorizationStatus(for: .video).rawValue)")
+                print("Total devices found: \(allDevices.count)")
+                if allDevices.isEmpty {
+                    print("No devices found at all. This may indicate:")
+                    print("  - Camera permission not granted")
+                    print("  - Missing device-camera entitlement (check entitlements file)")
+                    print("  - No cameras connected to the system")
+                } else {
+                    print("Devices found but filtered out:")
+                    for device in allDevices {
+                        print("  - \(device.localizedName)")
+                        print("    ID: \(device.uniqueID)")
+                        print("    Connected: \(device.isConnected)")
+                        print("    Has Video: \(device.hasMediaType(.video))")
+                        print("    Suspended: \(device.isSuspended)")
+                        print("    In Use: \(device.isInUseByAnotherApplication)")
+                        print("    Transport Type: \(device.transportType)")
+                    }
+                }
+            } else {
+                print("Discovered \(discoveredCameras.count) camera(s):")
+                for camera in discoveredCameras {
+                    print("  - \(camera.localizedName) (ID: \(camera.uniqueID))")
+                }
+            }
+        }
+    }
+    
+    private func setupDeviceNotifications() {
+        let connectedNotification: Notification.Name
+        let disconnectedNotification: Notification.Name
+        
+        if #available(macOS 15.0, iOS 17.0, *) {
+            connectedNotification = AVCaptureDevice.wasConnectedNotification
+            disconnectedNotification = AVCaptureDevice.wasDisconnectedNotification
+        } else {
+            connectedNotification = .AVCaptureDeviceWasConnected
+            disconnectedNotification = .AVCaptureDeviceWasDisconnected
+        }
+        
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(deviceConnected(_:)),
+            name: connectedNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(deviceDisconnected(_:)),
+            name: disconnectedNotification,
+            object: nil
+        )
+    }
+    
+    @objc private func deviceConnected(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            let status = AVCaptureDevice.authorizationStatus(for: .video)
+            if status == .authorized {
+                self?.discoverCameras()
+            } else {
+                self?.requestCameraPermissionAndDiscover()
+            }
+        }
+    }
+    
+    @objc private func deviceDisconnected(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if let device = notification.object as? AVCaptureDevice,
+               device == self.currentCamera {
+                let status = AVCaptureDevice.authorizationStatus(for: .video)
+                if status == .authorized {
+                    self.discoverCameras()
+                    if let newCamera = self.availableCameras.first {
+                        self.switchCamera(to: newCamera)
+                    }
+                } else {
+                    self.requestCameraPermissionAndDiscover()
+                }
+            } else {
+                let status = AVCaptureDevice.authorizationStatus(for: .video)
+                if status == .authorized {
+                    self.discoverCameras()
+                } else {
+                    self.requestCameraPermissionAndDiscover()
+                }
+            }
+        }
+    }
+    
+    func switchCamera(to device: AVCaptureDevice) {
+        guard device != currentCamera else { return }
+        guard availableCameras.contains(device) else { return }
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            self.captureSession.beginConfiguration()
+            
+            if let existingInput = self.deviceInput {
+                self.captureSession.removeInput(existingInput)
+            }
+            
+            do {
+                try device.lockForConfiguration()
+                
+                if device.isFocusModeSupported(.continuousAutoFocus) {
+                    device.focusMode = .continuousAutoFocus
+                }
+                if device.isExposureModeSupported(.continuousAutoExposure) {
+                    device.exposureMode = .continuousAutoExposure
+                }
+                if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                    device.whiteBalanceMode = .continuousAutoWhiteBalance
+                }
+                
+                let input = try AVCaptureDeviceInput(device: device)
+                if self.captureSession.canAddInput(input) {
+                    self.captureSession.addInput(input)
+                    self.deviceInput = input
+                    
+                    DispatchQueue.main.async {
+                        self.currentCamera = device
+                    }
+                }
+                
+                device.unlockForConfiguration()
+            } catch {
+                print("Error switching camera: \(error)")
+            }
+            
+            self.captureSession.commitConfiguration()
+        }
     }
     
     deinit {
@@ -120,8 +425,23 @@ class CameraController: NSObject, ObservableObject {
     func startSession() {
         guard !captureSession.isRunning else { return }
         
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        guard status == .authorized else {
+            requestCameraPermissionAndDiscover()
+            return
+        }
+        
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
+            
+            // Wait a bit for cameras to be discovered if they're not available yet
+            if self.availableCameras.isEmpty {
+                Thread.sleep(forTimeInterval: 0.5)
+                if self.availableCameras.isEmpty {
+                    print("Waiting for cameras to be discovered...")
+                    return
+                }
+            }
             
             // Ensure setup is complete before starting
             if !self.isSetup {
@@ -131,6 +451,8 @@ class CameraController: NSObject, ObservableObject {
             // Start the session
             if self.isSetup && !self.captureSession.isRunning {
                 self.captureSession.startRunning()
+            } else if !self.isSetup {
+                print("Camera setup failed, will retry when cameras are discovered")
             }
         }
     }
@@ -187,7 +509,36 @@ class CameraController: NSObject, ObservableObject {
     }
     
     private func setupCameraSync() {
-        guard !isSetup else { return }
+        if availableCameras.isEmpty {
+            print("No cameras available yet, discovering...")
+            discoverCameras()
+            return
+        }
+        
+        let currentDevice = deviceInput?.device
+        if isSetup && currentDevice == currentCamera {
+            print("Camera already set up with: \(currentDevice?.localizedName ?? "unknown")")
+            return
+        }
+        
+        if isSetup && currentDevice != currentCamera {
+            print("Switching from \(currentDevice?.localizedName ?? "unknown") to \(currentCamera?.localizedName ?? "unknown")")
+            isSetup = false
+        }
+        
+        let camera = currentCamera ?? availableCameras.first
+        
+        guard let camera = camera else {
+            print("Error: No camera available. Please check:")
+            print("  1. Camera permissions are granted")
+            print("  2. External camera is connected and recognized by the system")
+            print("  3. Camera is not being used by another application")
+            print("  4. Try disconnecting and reconnecting the external camera")
+            discoverCameras()
+            return
+        }
+        
+        print("Setting up camera: \(camera.localizedName)")
         
         captureSession.beginConfiguration()
         
@@ -212,29 +563,22 @@ class CameraController: NSObject, ObservableObject {
         }
         #endif
         
-        // Front camera for selfies
-        guard let frontCamera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
-            print("Front camera not available")
-            captureSession.commitConfiguration()
-            return
-        }
-        
         do {
             // Lock camera for configuration
-            try frontCamera.lockForConfiguration()
+            try camera.lockForConfiguration()
             
             // Configure camera for maximum quality
-            if frontCamera.isFocusModeSupported(.continuousAutoFocus) {
-                frontCamera.focusMode = .continuousAutoFocus
+            if camera.isFocusModeSupported(.continuousAutoFocus) {
+                camera.focusMode = .continuousAutoFocus
             }
-            if frontCamera.isExposureModeSupported(.continuousAutoExposure) {
-                frontCamera.exposureMode = .continuousAutoExposure
+            if camera.isExposureModeSupported(.continuousAutoExposure) {
+                camera.exposureMode = .continuousAutoExposure
             }
-            if frontCamera.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
-                frontCamera.whiteBalanceMode = .continuousAutoWhiteBalance
+            if camera.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
+                camera.whiteBalanceMode = .continuousAutoWhiteBalance
             }
             
-            let input = try AVCaptureDeviceInput(device: frontCamera)
+            let input = try AVCaptureDeviceInput(device: camera)
             deviceInput = input
             
             // Remove any existing inputs first
@@ -269,9 +613,15 @@ class CameraController: NSObject, ObservableObject {
             
             // Configure connections after committing
             if let connection = photoOutput.connection(with: .video) {
+                #if canImport(UIKit)
+                if connection.isVideoMirroringSupported && camera.position == .front {
+                    connection.isVideoMirrored = true
+                }
+                #else
                 if connection.isVideoMirroringSupported {
                     connection.isVideoMirrored = true
                 }
+                #endif
                 #if canImport(UIKit)
                 // Note: Using deprecated videoOrientation API for backward compatibility
                 // Will migrate to AVCaptureDeviceRotationCoordinator in future iOS 17+ only version
@@ -287,7 +637,7 @@ class CameraController: NSObject, ObservableObject {
                 }
             }
             
-            frontCamera.unlockForConfiguration()
+            camera.unlockForConfiguration()
             isSetup = true
             
             // Setup orientation observer for iOS
@@ -301,7 +651,7 @@ class CameraController: NSObject, ObservableObject {
         } catch {
             print("Error setting up camera: \(error)")
             captureSession.commitConfiguration()
-            frontCamera.unlockForConfiguration()
+            camera.unlockForConfiguration()
         }
     }
     
@@ -357,11 +707,7 @@ class CameraController: NSObject, ObservableObject {
         }
         #endif
         print("- Quality prioritization: \(settings.photoQualityPrioritization.rawValue)")
-        if let format = settings.format as? [String: Any] {
-            print("- Format: \(format)")
-        } else {
-            print("- Format: \(String(describing: settings.format))")
-        }
+        print("- Format: \(String(describing: settings.format))")
         
         #if canImport(UIKit)
         // Use current device orientation for photo capture
@@ -491,6 +837,7 @@ struct CameraViewWrapper: UIViewRepresentable {
         uiView.showCapturedImage = showCapturedImage
         uiView.showOverlay = showOverlay
         uiView.overlayOpacity = overlayOpacity
+        uiView.cameraController = cameraController
         uiView.updateUI()
     }
 }
@@ -529,6 +876,7 @@ struct CameraViewWrapper: NSViewRepresentable {
         nsView.showCapturedImage = showCapturedImage
         nsView.showOverlay = showOverlay
         nsView.overlayOpacity = overlayOpacity
+        nsView.cameraController = cameraController
         nsView.updateUI()
     }
 }
@@ -537,7 +885,7 @@ struct CameraViewWrapper: NSViewRepresentable {
 #if canImport(UIKit)
 class CameraContainerView: UIView {
     private var previewLayer: AVCaptureVideoPreviewLayer?
-    private var cameraController: CameraController?
+    var cameraController: CameraController?
     private var closeButton: UIButton!
     private var captureButton: UIButton!
     private var retakeButton: UIButton!
@@ -545,6 +893,7 @@ class CameraContainerView: UIView {
     private var imageView: UIImageView!
     private var overlayImageView: UIImageView!
     private var overlayToggleButton: UIButton!
+    private var cameraSwitchButton: UIButton!
     private var rotationIndicatorView: UIView!
     private var rotationIcon: UIImageView!
     private var rotationLabel: UILabel!
@@ -777,6 +1126,16 @@ class CameraContainerView: UIView {
         overlayToggleButton.addTarget(self, action: #selector(overlayToggleTapped), for: .touchUpInside)
         addSubview(overlayToggleButton)
         
+        // Camera switch button
+        cameraSwitchButton = UIButton(type: .system)
+        let cameraConfig = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium)
+        cameraSwitchButton.setImage(UIImage(systemName: "camera.rotate", withConfiguration: cameraConfig), for: .normal)
+        cameraSwitchButton.tintColor = .white
+        cameraSwitchButton.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        cameraSwitchButton.layer.cornerRadius = 8
+        cameraSwitchButton.addTarget(self, action: #selector(cameraSwitchTapped), for: .touchUpInside)
+        addSubview(cameraSwitchButton)
+        
         // Capture button
         captureButton = UIButton(type: .custom)
         captureButton.backgroundColor = .white
@@ -973,6 +1332,15 @@ class CameraContainerView: UIView {
                     width: buttonSize,
                     height: buttonSize
                 )
+                
+                // Camera switch button - above overlay toggle button
+                let cameraSwitchY = toggleY - buttonSize - toggleSpacing
+                cameraSwitchButton.frame = CGRect(
+                    x: captureX + (captureButtonSize - buttonSize) / 2,
+                    y: cameraSwitchY,
+                    width: buttonSize,
+                    height: buttonSize
+                )
             } else {
                 // In portrait, button goes at bottom center
                 let captureY = bounds.height - safeInsets.bottom - margin - captureButtonSize
@@ -992,9 +1360,19 @@ class CameraContainerView: UIView {
                     width: buttonSize,
                     height: buttonSize
                 )
+                
+                // Camera switch button - to the right of capture button in portrait
+                let cameraSwitchX = captureButton.frame.maxX + toggleSpacing
+                cameraSwitchButton.frame = CGRect(
+                    x: cameraSwitchX,
+                    y: captureY + (captureButtonSize - buttonSize) / 2,
+                    width: buttonSize,
+                    height: buttonSize
+                )
             }
             captureButton.isHidden = false
             overlayToggleButton.isHidden = false
+            cameraSwitchButton.isHidden = cameraController?.availableCameras.count ?? 0 <= 1
             retakeButton.isHidden = true
             saveButton.isHidden = true
         } else {
@@ -1024,6 +1402,7 @@ class CameraContainerView: UIView {
             saveButton.isHidden = false
             captureButton.isHidden = true
             overlayToggleButton.isHidden = true
+            cameraSwitchButton.isHidden = true
         }
     }
     
@@ -1084,7 +1463,7 @@ class CameraContainerView: UIView {
 #if canImport(AppKit)
 class CameraContainerView: NSView {
     private var previewLayer: AVCaptureVideoPreviewLayer?
-    private var cameraController: CameraController?
+    var cameraController: CameraController?
     private var closeButton: NSButton!
     private var captureButton: NSButton!
     private var retakeButton: NSButton!
@@ -1092,6 +1471,7 @@ class CameraContainerView: NSView {
     private var imageView: NSImageView!
     private var overlayImageView: NSImageView!
     private var overlayToggleButton: NSButton!
+    private var cameraSwitchButton: NSButton!
     
     var onDismiss: (() -> Void)?
     var onCapture: (() -> Void)?
@@ -1192,6 +1572,15 @@ class CameraContainerView: NSView {
         overlayToggleButton.target = self
         overlayToggleButton.action = #selector(overlayToggleTapped)
         addSubview(overlayToggleButton)
+        
+        // Camera switch button
+        cameraSwitchButton = NSButton()
+        cameraSwitchButton.image = NSImage(systemSymbolName: "camera.rotate", accessibilityDescription: "Switch Camera")
+        cameraSwitchButton.isBordered = false
+        cameraSwitchButton.bezelStyle = .rounded
+        cameraSwitchButton.target = self
+        cameraSwitchButton.action = #selector(cameraSwitchTapped)
+        addSubview(cameraSwitchButton)
         
         // Capture button
         captureButton = NSButton()
@@ -1294,8 +1683,18 @@ class CameraContainerView: NSView {
                 height: buttonSize
             )
             
+            // Camera switch button - to the right of capture button
+            let cameraSwitchX = captureButton.frame.maxX + toggleSpacing
+            cameraSwitchButton.frame = CGRect(
+                x: cameraSwitchX,
+                y: captureY + (captureButtonSize - buttonSize) / 2,
+                width: buttonSize,
+                height: buttonSize
+            )
+            
             captureButton.isHidden = false
             overlayToggleButton.isHidden = false
+            cameraSwitchButton.isHidden = cameraController?.availableCameras.count ?? 0 <= 1
             retakeButton.isHidden = true
             saveButton.isHidden = true
         } else {
@@ -1314,6 +1713,7 @@ class CameraContainerView: NSView {
             saveButton.isHidden = false
             captureButton.isHidden = true
             overlayToggleButton.isHidden = true
+            cameraSwitchButton.isHidden = true
         }
     }
     
@@ -1345,6 +1745,18 @@ class CameraContainerView: NSView {
     
     @objc private func overlayToggleTapped() {
         onToggleOverlay?()
+    }
+    
+    @objc private func cameraSwitchTapped() {
+        guard let cameraController = cameraController else { return }
+        let availableCameras = cameraController.availableCameras
+        guard availableCameras.count > 1 else { return }
+        
+        let currentIndex = availableCameras.firstIndex(of: cameraController.currentCamera!) ?? 0
+        let nextIndex = (currentIndex + 1) % availableCameras.count
+        let nextCamera = availableCameras[nextIndex]
+        
+        cameraController.switchCamera(to: nextCamera)
     }
     
     @objc private func retakeTapped() {

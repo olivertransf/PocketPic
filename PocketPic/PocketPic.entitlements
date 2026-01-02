@@ -14,5 +14,7 @@
 	<array>
 		<string>CloudKit</string>
 	</array>
+	<key>com.apple.security.device.camera</key>
+	<true/>
 </dict>
 </plist>

@@ -318,9 +318,7 @@ class PhotoStore: ObservableObject {
             }
             resultImage = image
         }
-        if let photosImage = resultImage {
-            print("Loaded image from Photos library: \(photosImage.size)")
-        }
+        // Image loaded from Photos library
         #elseif canImport(AppKit)
         imageManager.requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .aspectFill, options: requestOptions) { image, info in
             if let error = info?[PHImageErrorKey] as? Error {
@@ -328,9 +326,7 @@ class PhotoStore: ObservableObject {
             }
             resultImage = image
         }
-        if let photosImage = resultImage {
-            print("Loaded image from Photos library (iCloud): \(photosImage.size)")
-        }
+        // Image loaded from Photos library
         #endif
         
         return resultImage
