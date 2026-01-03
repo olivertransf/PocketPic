@@ -104,6 +104,8 @@ class CameraController: NSObject, ObservableObject {
     private let photoOutput = AVCapturePhotoOutput()
     private var captureCompletion: ((PlatformImage?) -> Void)?
     private var isSetup = false
+    private var isConfiguring = false
+    private let configQueue = DispatchQueue(label: "CameraControllerConfigQueue")
     var deviceInput: AVCaptureDeviceInput?
     
     @Published var availableCameras: [AVCaptureDevice] = []
@@ -172,7 +174,7 @@ class CameraController: NSObject, ObservableObject {
             position: .unspecified
         )
         let allDevices = discoverySession.devices
-        let discoveredCameras = allDevices.filter { $0.isConnected }
+        let discoveredCameras = allDevices.filter { $0.hasMediaType(.video) }
         #else
         var allDevices: [AVCaptureDevice] = []
         
@@ -237,19 +239,6 @@ class CameraController: NSObject, ObservableObject {
             let notSuspended = !device.isSuspended
             let notInUse = !device.isInUseByAnotherApplication
             
-            if !isConnected {
-                print("Device \(device.localizedName) is not connected")
-            }
-            if !hasVideo {
-                print("Device \(device.localizedName) does not support video")
-            }
-            if device.isSuspended {
-                print("Device \(device.localizedName) is suspended")
-            }
-            if device.isInUseByAnotherApplication {
-                print("Device \(device.localizedName) is in use by another application")
-            }
-            
             return isConnected && hasVideo && notSuspended && notInUse
         }
         #endif
@@ -261,18 +250,24 @@ class CameraController: NSObject, ObservableObject {
             
             self.availableCameras = discoveredCameras
             
-            if self.currentCamera == nil || !discoveredCameras.contains(self.currentCamera!) {
-                self.currentCamera = discoveredCameras.first
+            let firstCamera = discoveredCameras.first
+            
+            if self.currentCamera == nil || !(discoveredCameras.contains { $0.uniqueID == self.currentCamera?.uniqueID }) {
+                self.currentCamera = firstCamera
                 print("Selected camera: \(self.currentCamera?.localizedName ?? "none")")
             }
             
             if !hadCameras && !discoveredCameras.isEmpty && self.currentCamera != nil {
                 if !self.isSetup {
-                    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    self.configQueue.async { [weak self] in
                         guard let self = self else { return }
-                        self.setupCameraSync()
-                        if self.isSetup && !self.captureSession.isRunning {
-                            self.captureSession.startRunning()
+                        self.setupCameraSync() // Only beginConfiguration/commitConfiguration here!
+                        // Important: Only startRunning after configuration block is done
+                        DispatchQueue.main.async { [weak self] in
+                            guard let self = self else { return }
+                            if self.isSetup && !self.captureSession.isRunning {
+                                self.captureSession.startRunning()
+                            }
                         }
                     }
                 }
@@ -280,7 +275,6 @@ class CameraController: NSObject, ObservableObject {
             
             if discoveredCameras.isEmpty {
                 print("Warning: No cameras discovered.")
-                print("Camera permission status: \(AVCaptureDevice.authorizationStatus(for: .video).rawValue)")
                 print("Total devices found: \(allDevices.count)")
                 if allDevices.isEmpty {
                     print("No devices found at all. This may indicate:")
@@ -292,11 +286,7 @@ class CameraController: NSObject, ObservableObject {
                     for device in allDevices {
                         print("  - \(device.localizedName)")
                         print("    ID: \(device.uniqueID)")
-                        print("    Connected: \(device.isConnected)")
                         print("    Has Video: \(device.hasMediaType(.video))")
-                        print("    Suspended: \(device.isSuspended)")
-                        print("    In Use: \(device.isInUseByAnotherApplication)")
-                        print("    Transport Type: \(device.transportType)")
                     }
                 }
             } else {
@@ -348,35 +338,23 @@ class CameraController: NSObject, ObservableObject {
     @objc private func deviceDisconnected(_ notification: Notification) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            if let device = notification.object as? AVCaptureDevice,
-               device == self.currentCamera {
-                let status = AVCaptureDevice.authorizationStatus(for: .video)
-                if status == .authorized {
-                    self.discoverCameras()
-                    if let newCamera = self.availableCameras.first {
-                        self.switchCamera(to: newCamera)
-                    }
-                } else {
-                    self.requestCameraPermissionAndDiscover()
-                }
+            let status = AVCaptureDevice.authorizationStatus(for: .video)
+            self.discoverCameras()
+            if let newCamera = self.availableCameras.first {
+                self.switchCamera(to: newCamera)
             } else {
-                let status = AVCaptureDevice.authorizationStatus(for: .video)
-                if status == .authorized {
-                    self.discoverCameras()
-                } else {
-                    self.requestCameraPermissionAndDiscover()
-                }
+                self.currentCamera = nil
             }
         }
     }
     
     func switchCamera(to device: AVCaptureDevice) {
-        guard device != currentCamera else { return }
-        guard availableCameras.contains(device) else { return }
-        
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        if let current = currentCamera, current.uniqueID == device.uniqueID { return }
+        guard availableCameras.contains(where: { $0.uniqueID == device.uniqueID }) else { return }
+        configQueue.async { [weak self] in
             guard let self = self else { return }
             
+            self.isConfiguring = true
             self.captureSession.beginConfiguration()
             
             if let existingInput = self.deviceInput {
@@ -385,7 +363,6 @@ class CameraController: NSObject, ObservableObject {
             
             do {
                 try device.lockForConfiguration()
-                
                 if device.isFocusModeSupported(.continuousAutoFocus) {
                     device.focusMode = .continuousAutoFocus
                 }
@@ -400,7 +377,6 @@ class CameraController: NSObject, ObservableObject {
                 if self.captureSession.canAddInput(input) {
                     self.captureSession.addInput(input)
                     self.deviceInput = input
-                    
                     DispatchQueue.main.async {
                         self.currentCamera = device
                     }
@@ -412,6 +388,7 @@ class CameraController: NSObject, ObservableObject {
             }
             
             self.captureSession.commitConfiguration()
+            self.isConfiguring = false
         }
     }
     
@@ -423,6 +400,7 @@ class CameraController: NSObject, ObservableObject {
     }
     
     func startSession() {
+        // Only start/call startRunning after any configuration block has ended
         guard !captureSession.isRunning else { return }
         
         let status = AVCaptureDevice.authorizationStatus(for: .video)
@@ -430,11 +408,11 @@ class CameraController: NSObject, ObservableObject {
             requestCameraPermissionAndDiscover()
             return
         }
-        
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+
+        // Wait until not in config
+        configQueue.async { [weak self] in
             guard let self = self else { return }
-            
-            // Wait a bit for cameras to be discovered if they're not available yet
+            // Wait for setup if needed
             if self.availableCameras.isEmpty {
                 Thread.sleep(forTimeInterval: 0.5)
                 if self.availableCameras.isEmpty {
@@ -443,16 +421,16 @@ class CameraController: NSObject, ObservableObject {
                 }
             }
             
-            // Ensure setup is complete before starting
             if !self.isSetup {
                 self.setupCameraSync()
             }
             
-            // Start the session
-            if self.isSetup && !self.captureSession.isRunning {
-                self.captureSession.startRunning()
-            } else if !self.isSetup {
-                print("Camera setup failed, will retry when cameras are discovered")
+            // Wait for any config block to finish before starting session
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                if self.isSetup && !self.captureSession.isRunning && !self.isConfiguring {
+                    self.captureSession.startRunning()
+                }
             }
         }
     }
@@ -460,7 +438,6 @@ class CameraController: NSObject, ObservableObject {
     @available(iOS, deprecated: 17.0, message: "Use AVCaptureDeviceRotationCoordinator instead")
     private func getVideoOrientation() -> AVCaptureVideoOrientation {
         #if canImport(UIKit)
-        // Support landscape mode for camera preview
         let deviceOrientation = UIDevice.current.orientation
         switch deviceOrientation {
         case .landscapeLeft:
@@ -473,7 +450,6 @@ class CameraController: NSObject, ObservableObject {
             return .portrait
         }
         #else
-        // macOS doesn't have device orientation
         return .portrait
         #endif
     }
@@ -485,22 +461,16 @@ class CameraController: NSObject, ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            // Note: updateVideoOrientation uses deprecated API for backward compatibility
-            // Will migrate to AVCaptureDeviceRotationCoordinator in future iOS 17+ only version
             self?.updateVideoOrientation()
         }
         #endif
-        // macOS doesn't need orientation observer
     }
     
     @available(iOS, deprecated: 17.0, message: "Use AVCaptureDeviceRotationCoordinator instead")
     private func updateVideoOrientation() {
         guard let connection = photoOutput.connection(with: .video) else { return }
         #if canImport(UIKit)
-        if #available(iOS 17.0, *) {
-            // Use new rotation coordinator API in iOS 17+
-            // For now, keep using old API for compatibility
-        }
+        if #available(iOS 17.0, *) { }
         #endif
         guard connection.isVideoOrientationSupported else { return }
         
@@ -508,6 +478,7 @@ class CameraController: NSObject, ObservableObject {
         connection.videoOrientation = orientation
     }
     
+    // WARNING: Must not call captureSession.startRunning inside begin/commit!
     private func setupCameraSync() {
         if availableCameras.isEmpty {
             print("No cameras available yet, discovering...")
@@ -516,12 +487,12 @@ class CameraController: NSObject, ObservableObject {
         }
         
         let currentDevice = deviceInput?.device
-        if isSetup && currentDevice == currentCamera {
+        if isSetup && currentDevice?.uniqueID == currentCamera?.uniqueID {
             print("Camera already set up with: \(currentDevice?.localizedName ?? "unknown")")
             return
         }
         
-        if isSetup && currentDevice != currentCamera {
+        if isSetup && currentDevice?.uniqueID != currentCamera?.uniqueID {
             print("Switching from \(currentDevice?.localizedName ?? "unknown") to \(currentCamera?.localizedName ?? "unknown")")
             isSetup = false
         }
@@ -530,44 +501,30 @@ class CameraController: NSObject, ObservableObject {
         
         guard let camera = camera else {
             print("Error: No camera available. Please check:")
-            print("  1. Camera permissions are granted")
-            print("  2. External camera is connected and recognized by the system")
-            print("  3. Camera is not being used by another application")
-            print("  4. Try disconnecting and reconnecting the external camera")
             discoverCameras()
             return
         }
         
         print("Setting up camera: \(camera.localizedName)")
-        
+        isConfiguring = true
         captureSession.beginConfiguration()
         
         #if canImport(UIKit)
-        // iOS: Use high quality preset (allows portrait aspect ratios)
-        // Portrait selfies work better with .high preset which supports various aspect ratios
         if captureSession.canSetSessionPreset(.high) {
             captureSession.sessionPreset = .high
-            print("Camera: Using .high preset for portrait selfies (iOS)")
         } else if captureSession.canSetSessionPreset(.photo) {
             captureSession.sessionPreset = .photo
-            print("Camera: Fallback to .photo preset")
         }
         #else
-        // macOS: Keep existing preset for compatibility
         if captureSession.canSetSessionPreset(.hd1920x1080) {
             captureSession.sessionPreset = .hd1920x1080
-            print("Camera: Using 1920x1080 preset (macOS)")
         } else if captureSession.canSetSessionPreset(.high) {
             captureSession.sessionPreset = .high
-            print("Camera: Fallback to .high preset")
         }
         #endif
         
         do {
-            // Lock camera for configuration
             try camera.lockForConfiguration()
-            
-            // Configure camera for maximum quality
             if camera.isFocusModeSupported(.continuousAutoFocus) {
                 camera.focusMode = .continuousAutoFocus
             }
@@ -581,37 +538,29 @@ class CameraController: NSObject, ObservableObject {
             let input = try AVCaptureDeviceInput(device: camera)
             deviceInput = input
             
-            // Remove any existing inputs first
             for existingInput in captureSession.inputs {
                 captureSession.removeInput(existingInput)
             }
-            
             if captureSession.canAddInput(input) {
                 captureSession.addInput(input)
             }
             
-            // Remove any existing outputs
             for existingOutput in captureSession.outputs {
                 captureSession.removeOutput(existingOutput)
             }
-            
             if captureSession.canAddOutput(photoOutput) {
                 captureSession.addOutput(photoOutput)
-                
-                // Configure photo output for best quality
                 #if canImport(UIKit)
                 if #available(iOS 16.0, *) {
-                    // Use maxPhotoDimensions for iOS 16+
                 } else {
                     photoOutput.isHighResolutionCaptureEnabled = true
                 }
                 #endif
                 photoOutput.maxPhotoQualityPrioritization = .quality
             }
-            
             captureSession.commitConfiguration()
+            isConfiguring = false
             
-            // Configure connections after committing
             if let connection = photoOutput.connection(with: .video) {
                 #if canImport(UIKit)
                 if connection.isVideoMirroringSupported && camera.position == .front {
@@ -622,35 +571,22 @@ class CameraController: NSObject, ObservableObject {
                     connection.isVideoMirrored = true
                 }
                 #endif
-                #if canImport(UIKit)
-                // Note: Using deprecated videoOrientation API for backward compatibility
-                // Will migrate to AVCaptureDeviceRotationCoordinator in future iOS 17+ only version
-                if #available(iOS 17.0, *) {
-                    // Use new rotation coordinator API in iOS 17+
-                    // For now, keep using old API for compatibility
-                }
-                #endif
                 if connection.isVideoOrientationSupported {
                     let orientation = getVideoOrientation()
                     connection.videoOrientation = orientation
-                    print("Camera: Set video orientation to \(orientation.rawValue)")
                 }
             }
-            
             camera.unlockForConfiguration()
             isSetup = true
-            
-            // Setup orientation observer for iOS
             #if canImport(UIKit)
             setupOrientationObserver()
             #elseif canImport(AppKit)
-            // macOS: Keep orientation observer for compatibility
             setupOrientationObserver()
             #endif
-            
         } catch {
             print("Error setting up camera: \(error)")
             captureSession.commitConfiguration()
+            isConfiguring = false
             camera.unlockForConfiguration()
         }
     }
@@ -665,12 +601,20 @@ class CameraController: NSObject, ObservableObject {
     }
     
     func capturePhoto(completion: @escaping (PlatformImage?) -> Void) {
+        guard currentCamera != nil, deviceInput?.device == currentCamera else {
+            print("Capture photo called, but currentCamera is nil or not setup")
+            completion(nil)
+            return
+        }
+        guard captureSession.inputs.count > 0, captureSession.outputs.contains(photoOutput) else {
+            print("Capture photo called, but session has no input/output")
+            completion(nil)
+            return
+        }
+
         captureCompletion = completion
         
-        // Create maximum quality photo settings
         let settings: AVCapturePhotoSettings
-        
-        // Use JPEG format for best compatibility and quality
         if photoOutput.availablePhotoCodecTypes.contains(.jpeg) {
             settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
         } else {
@@ -678,52 +622,17 @@ class CameraController: NSObject, ObservableObject {
         }
         
         #if canImport(UIKit)
-        // iOS: Enable high resolution for best portrait selfie quality
-        // Portrait photos benefit from higher resolution
         if #available(iOS 16.0, *) {
-            // Use maxPhotoDimensions for iOS 16+
             let maxDimensions = photoOutput.maxPhotoDimensions
             settings.maxPhotoDimensions = maxDimensions
         } else {
             settings.isHighResolutionPhotoEnabled = true
         }
-        #else
-        // macOS: Keep existing setting
         #endif
-        settings.flashMode = .off // Front camera doesn't have flash
-        
-        // Set maximum quality prioritization
+        settings.flashMode = .off
         if photoOutput.maxPhotoQualityPrioritization == .quality {
             settings.photoQualityPrioritization = .quality
         }
-        
-        // Debug: Log the settings being used
-        print("Photo capture settings:")
-        #if canImport(UIKit)
-        if #available(iOS 16.0, *) {
-            // Use maxPhotoDimensions for iOS 16+
-        } else {
-            print("- High resolution enabled: \(settings.isHighResolutionPhotoEnabled)")
-        }
-        #endif
-        print("- Quality prioritization: \(settings.photoQualityPrioritization.rawValue)")
-        print("- Format: \(String(describing: settings.format))")
-        
-        #if canImport(UIKit)
-        // Use current device orientation for photo capture
-        // Note: Using deprecated videoOrientation API for backward compatibility
-        if let photoOutputConnection = photoOutput.connection(with: .video) {
-            if #available(iOS 17.0, *) {
-                // Use new rotation coordinator API in iOS 17+
-                // For now, keep using old API for compatibility
-            }
-            if photoOutputConnection.isVideoOrientationSupported {
-                let orientation = getVideoOrientation()
-                photoOutputConnection.videoOrientation = orientation
-                print("Camera: Photo capture using orientation \(orientation.rawValue)")
-            }
-        }
-        #endif
         
         photoOutput.capturePhoto(with: settings, delegate: self)
     }
@@ -734,10 +643,7 @@ class CameraController: NSObject, ObservableObject {
             guard let self = self else { return }
             if let connection = self.photoOutput.connection(with: .video) {
                 #if canImport(UIKit)
-                if #available(iOS 17.0, *) {
-                    // Use new rotation coordinator API in iOS 17+
-                    // For now, keep using old API for compatibility
-                }
+                if #available(iOS 17.0, *) { }
                 #endif
                 if connection.isVideoOrientationSupported {
                     connection.videoOrientation = orientation
@@ -763,8 +669,6 @@ class CameraController: NSObject, ObservableObject {
     #endif
 }
 
-// MARK: - Photo Capture Delegate
-
 extension CameraController: AVCapturePhotoCaptureDelegate {
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         guard let imageData = photo.fileDataRepresentation() else {
@@ -777,31 +681,16 @@ extension CameraController: AVCapturePhotoCaptureDelegate {
             captureCompletion?(nil)
             return
         }
-        
-        // Debug: Log the captured image details (match macOS format)
-        print("Captured photo:")
-        print("- Image size: \(image.size)")
-        print("- Data size: \(imageData.count) bytes")
-        
         captureCompletion?(image)
-        
         #elseif canImport(AppKit)
         guard let image = NSImage(data: imageData) else {
             captureCompletion?(nil)
             return
         }
-        
-        // Debug: Log the captured image details
-        print("Captured photo:")
-        print("- Image size: \(image.size)")
-        print("- Data size: \(imageData.count) bytes")
-        
         captureCompletion?(image)
         #endif
     }
 }
-
-// MARK: - Camera View Wrapper
 
 #if canImport(UIKit)
 struct CameraViewWrapper: UIViewRepresentable {
@@ -937,7 +826,7 @@ class CameraContainerView: UIView {
     
     private var isLandscape: Bool {
         let orientation = UIDevice.current.orientation
-        return orientation == .landscapeLeft || orientation == .landscapeRight || 
+        return orientation == .landscapeLeft || orientation == .landscapeRight ||
                (orientation == .unknown && bounds.width > bounds.height)
     }
     
@@ -965,19 +854,14 @@ class CameraContainerView: UIView {
     }
     
     @objc private func orientationDidChange() {
-        // Cancel any pending orientation updates
         orientationUpdateWorkItem?.cancel()
-        
-        // Debounce orientation changes to prevent rapid updates
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            // Note: updateVideoOrientation uses deprecated API for backward compatibility
             self.updateVideoOrientation()
             self.updateFrame()
             self.setNeedsLayout()
             self.layoutIfNeeded()
         }
-        
         orientationUpdateWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: workItem)
     }
@@ -985,38 +869,21 @@ class CameraContainerView: UIView {
     func setupCamera(cameraController: CameraController) {
         self.cameraController = cameraController
         let layer = AVCaptureVideoPreviewLayer(session: cameraController.captureSession)
-        layer.videoGravity = .resizeAspect  // Fit full feed without cropping
-        
-        // Ensure the layer connection is properly configured
-        if let connection = layer.connection {
-            #if canImport(UIKit)
-            // Note: Using deprecated videoOrientation API for backward compatibility
-            if #available(iOS 17.0, *) {
-                // Use new rotation coordinator API in iOS 17+
-                // For now, keep using old API for compatibility
-            }
-            #endif
-            if connection.isVideoOrientationSupported {
-                connection.videoOrientation = .portrait
-            }
+        layer.videoGravity = .resizeAspect
+        if let connection = layer.connection, connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
         }
-        
         self.layer.insertSublayer(layer, at: 0)
         self.previewLayer = layer
-        
-        // Update frames after adding the layer
         DispatchQueue.main.async { [weak self] in
             self?.updateFrame()
-            // Note: updateVideoOrientation uses deprecated API for backward compatibility
             self?.updateVideoOrientation()
-            // Ensure preview is visible
             self?.previewLayer?.isHidden = false
         }
     }
     
     @available(iOS, deprecated: 17.0, message: "Use AVCaptureDeviceRotationCoordinator instead")
     private func updateVideoOrientation() {
-        // Ensure we're on the main thread
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in
                 self?.updateVideoOrientation()
@@ -1025,16 +892,10 @@ class CameraContainerView: UIView {
         }
         
         guard let connection = previewLayer?.connection else { return }
-        
         #if canImport(UIKit)
-        if #available(iOS 17.0, *) {
-            // Use new rotation coordinator API in iOS 17+
-            // For now, keep using old API for compatibility
-        }
+        if #available(iOS 17.0, *) { }
         #endif
-        
         guard connection.isVideoOrientationSupported else { return }
-        
         let deviceOrientation = UIDevice.current.orientation
         let videoOrientation: AVCaptureVideoOrientation
         
@@ -1048,34 +909,27 @@ class CameraContainerView: UIView {
         default:
             videoOrientation = .portrait
         }
-        
-        // Update the connection synchronously on main thread
         connection.videoOrientation = videoOrientation
         cameraController?.updateVideoOrientation(videoOrientation)
         updateRotationIndicator()
-        
-        // Force preview layer to update
         previewLayer?.frame = previewLayer?.frame ?? .zero
     }
     
     private func setupUI() {
         backgroundColor = .black
         
-        // Rotation indicator view
         rotationIndicatorView = UIView()
         rotationIndicatorView.backgroundColor = UIColor.black.withAlphaComponent(0.8)
         rotationIndicatorView.layer.cornerRadius = 20
         rotationIndicatorView.isHidden = true
         addSubview(rotationIndicatorView)
         
-        // Rotation icon
         rotationIcon = UIImageView()
         rotationIcon.image = UIImage(systemName: "arrow.triangle.2.circlepath")
         rotationIcon.tintColor = .white
         rotationIcon.contentMode = .scaleAspectFit
         rotationIndicatorView.addSubview(rotationIcon)
         
-        // Rotation label
         rotationLabel = UILabel()
         rotationLabel.text = "Rotate to Landscape"
         rotationLabel.textColor = .white
@@ -1083,29 +937,25 @@ class CameraContainerView: UIView {
         rotationLabel.textAlignment = .center
         rotationIndicatorView.addSubview(rotationLabel)
         
-        // Overlay image view for previous photo (semi-transparent)
         overlayImageView = UIImageView()
         overlayImageView.contentMode = .scaleAspectFit
-        overlayImageView.alpha = 0.4  // Default value, will be updated from PhotoStore
+        overlayImageView.alpha = 0.4
         overlayImageView.isHidden = true
         overlayImageView.isUserInteractionEnabled = false
         addSubview(overlayImageView)
         
-        // Image view for captured photo
         imageView = UIImageView()
         imageView.contentMode = .scaleAspectFit
         imageView.backgroundColor = .black
         imageView.isHidden = true
         addSubview(imageView)
         
-        // Close button
         closeButton = UIButton(type: .system)
         closeButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
         closeButton.tintColor = .white
         closeButton.contentVerticalAlignment = .fill
         closeButton.contentHorizontalAlignment = .fill
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        // Increase touch area for better iPad usability
         if #available(iOS 15.0, *) {
             var config = UIButton.Configuration.plain()
             config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
@@ -1115,7 +965,6 @@ class CameraContainerView: UIView {
         }
         addSubview(closeButton)
         
-        // Overlay toggle button
         overlayToggleButton = UIButton(type: .system)
         let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium)
         overlayToggleButton.setImage(UIImage(systemName: "person.crop.rectangle.stack", withConfiguration: config), for: .normal)
@@ -1126,7 +975,6 @@ class CameraContainerView: UIView {
         overlayToggleButton.addTarget(self, action: #selector(overlayToggleTapped), for: .touchUpInside)
         addSubview(overlayToggleButton)
         
-        // Camera switch button
         cameraSwitchButton = UIButton(type: .system)
         let cameraConfig = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium)
         cameraSwitchButton.setImage(UIImage(systemName: "camera.rotate", withConfiguration: cameraConfig), for: .normal)
@@ -1136,7 +984,6 @@ class CameraContainerView: UIView {
         cameraSwitchButton.addTarget(self, action: #selector(cameraSwitchTapped), for: .touchUpInside)
         addSubview(cameraSwitchButton)
         
-        // Capture button
         captureButton = UIButton(type: .custom)
         captureButton.backgroundColor = .white
         captureButton.layer.cornerRadius = 35
@@ -1145,7 +992,6 @@ class CameraContainerView: UIView {
         captureButton.addTarget(self, action: #selector(captureTapped), for: .touchUpInside)
         addSubview(captureButton)
         
-        // Retake button
         retakeButton = UIButton(type: .system)
         retakeButton.setTitle("Retake", for: .normal)
         retakeButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
@@ -1159,7 +1005,6 @@ class CameraContainerView: UIView {
         retakeButton.addTarget(self, action: #selector(retakeTapped), for: .touchUpInside)
         addSubview(retakeButton)
         
-        // Save button
         saveButton = UIButton(type: .system)
         saveButton.setTitle("Use Photo", for: .normal)
         saveButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
@@ -1188,7 +1033,6 @@ class CameraContainerView: UIView {
         rotationIndicatorView.isHidden = !shouldShow
         
         if shouldShow {
-            // Center the rotation indicator
             let indicatorWidth: CGFloat = 280
             let indicatorHeight: CGFloat = 120
             rotationIndicatorView.frame = CGRect(
@@ -1197,8 +1041,6 @@ class CameraContainerView: UIView {
                 width: indicatorWidth,
                 height: indicatorHeight
             )
-            
-            // Layout icon and label
             let iconSize: CGFloat = 50
             rotationIcon.frame = CGRect(
                 x: (indicatorWidth - iconSize) / 2,
@@ -1206,7 +1048,6 @@ class CameraContainerView: UIView {
                 width: iconSize,
                 height: iconSize
             )
-            
             rotationLabel.frame = CGRect(
                 x: 20,
                 y: 75,
@@ -1217,78 +1058,54 @@ class CameraContainerView: UIView {
     }
     
     private func getCameraAspectRatio() -> CGFloat {
-        // Calculate aspect ratio based on current orientation
         guard let cameraController = cameraController,
               let device = cameraController.deviceInput?.device else {
-            // Fallback aspect ratios
-            if isLandscape {
-                return 16.0 / 9.0  // Landscape 16:9
-            } else {
-                return 9.0 / 16.0  // Portrait 9:16
-            }
+            if isLandscape { return 16.0 / 9.0 }
+            else { return 9.0 / 16.0 }
         }
         
         let activeFormat = device.activeFormat
         let formatDescription = activeFormat.formatDescription
         let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
         
-        // Calculate aspect ratio based on orientation
         if isLandscape {
-            // Landscape: width/height
             let sensorAspectRatio = CGFloat(dimensions.width) / CGFloat(dimensions.height)
-            print("Camera: Landscape - dimensions: \(dimensions.width)x\(dimensions.height), aspect ratio: \(sensorAspectRatio)")
             return sensorAspectRatio
         } else {
-            // Portrait: height/width (flipped from sensor)
             let sensorAspectRatio = CGFloat(dimensions.height) / CGFloat(dimensions.width)
-            print("Camera: Portrait - dimensions: \(dimensions.width)x\(dimensions.height), aspect ratio: \(sensorAspectRatio)")
             return sensorAspectRatio
         }
     }
     
     private func updateFrame() {
-        // Ensure we're on the main thread
         guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in
-                self?.updateFrame()
-            }
+            DispatchQueue.main.async { [weak self] in self?.updateFrame() }
             return
         }
-        
-        // Support both portrait and landscape orientations
         let previewFrame: CGRect
         
         if isLandscape {
-            // Landscape mode: fill the height, center horizontally
             let cameraAspectRatio = getCameraAspectRatio()
             let previewHeight = bounds.height
             let previewWidth = previewHeight * cameraAspectRatio
             let previewX = (bounds.width - previewWidth) / 2
-            
             previewFrame = CGRect(x: previewX, y: 0, width: previewWidth, height: previewHeight)
         } else {
-            // Portrait mode: fill the width, center vertically
             let cameraAspectRatio = getCameraAspectRatio()
             let previewWidth = bounds.width
             let previewHeight = previewWidth / cameraAspectRatio
             let previewY = (bounds.height - previewHeight) / 2
-            
             previewFrame = CGRect(x: 0, y: previewY, width: previewWidth, height: previewHeight)
         }
         
-        // Update preview layer frame
-        if let previewLayer = previewLayer {
-            previewLayer.frame = previewFrame
-            previewLayer.cornerRadius = 0
-            previewLayer.masksToBounds = true
-        }
+        previewLayer?.frame = previewFrame
+        previewLayer?.cornerRadius = 0
+        previewLayer?.masksToBounds = true
         
-        // Update image view frame
         imageView.frame = previewFrame
         imageView.layer.cornerRadius = 0
         imageView.clipsToBounds = true
         
-        // Update overlay image view frame
         overlayImageView.frame = previewFrame
         overlayImageView.layer.cornerRadius = 0
         overlayImageView.clipsToBounds = true
@@ -1296,25 +1113,17 @@ class CameraContainerView: UIView {
     
     private func updateButtonPositions() {
         let safeInsets = safeAreaInsets
-        let buttonSize: CGFloat = 54  // Increased for better iPad usability
+        let buttonSize: CGFloat = 54
         let captureButtonSize: CGFloat = 70
         let margin: CGFloat = 20
         
-        // Determine if we're in landscape based on bounds
         let isLandscape = bounds.width > bounds.height
-        
-        // Close button - top leading corner with safe area
         let closeX = safeInsets.left + margin
         let closeY = safeInsets.top + margin
         closeButton.frame = CGRect(x: closeX, y: closeY, width: buttonSize, height: buttonSize)
         
-        // Debug logging for button positioning
-        print("Close button: frame = \(closeButton.frame), safeInsets = \(safeInsets)")
-        
         if !showCapturedImage {
-            // Capture button - position based on orientation
             if isLandscape {
-                // In landscape, button goes on the right side (trailing edge), centered vertically
                 let captureX = bounds.width - safeInsets.right - margin - captureButtonSize
                 captureButton.frame = CGRect(
                     x: captureX,
@@ -1322,8 +1131,6 @@ class CameraContainerView: UIView {
                     width: captureButtonSize,
                     height: captureButtonSize
                 )
-                
-                // Overlay toggle button - above capture button in landscape
                 let toggleSpacing: CGFloat = 20
                 let toggleY = captureButton.frame.minY - buttonSize - toggleSpacing
                 overlayToggleButton.frame = CGRect(
@@ -1332,8 +1139,6 @@ class CameraContainerView: UIView {
                     width: buttonSize,
                     height: buttonSize
                 )
-                
-                // Camera switch button - above overlay toggle button
                 let cameraSwitchY = toggleY - buttonSize - toggleSpacing
                 cameraSwitchButton.frame = CGRect(
                     x: captureX + (captureButtonSize - buttonSize) / 2,
@@ -1342,7 +1147,6 @@ class CameraContainerView: UIView {
                     height: buttonSize
                 )
             } else {
-                // In portrait, button goes at bottom center
                 let captureY = bounds.height - safeInsets.bottom - margin - captureButtonSize
                 captureButton.frame = CGRect(
                     x: (bounds.width - captureButtonSize) / 2,
@@ -1350,8 +1154,6 @@ class CameraContainerView: UIView {
                     width: captureButtonSize,
                     height: captureButtonSize
                 )
-                
-                // Overlay toggle button - to the left of capture button in portrait
                 let toggleSpacing: CGFloat = 30
                 let toggleX = captureButton.frame.minX - buttonSize - toggleSpacing
                 overlayToggleButton.frame = CGRect(
@@ -1360,8 +1162,6 @@ class CameraContainerView: UIView {
                     width: buttonSize,
                     height: buttonSize
                 )
-                
-                // Camera switch button - to the right of capture button in portrait
                 let cameraSwitchX = captureButton.frame.maxX + toggleSpacing
                 cameraSwitchButton.frame = CGRect(
                     x: cameraSwitchX,
@@ -1372,29 +1172,25 @@ class CameraContainerView: UIView {
             }
             captureButton.isHidden = false
             overlayToggleButton.isHidden = false
-            cameraSwitchButton.isHidden = cameraController?.availableCameras.count ?? 0 <= 1
+            let cameraCount = cameraController?.availableCameras.count ?? 0
+            cameraSwitchButton.isHidden = cameraCount <= 1
             retakeButton.isHidden = true
             saveButton.isHidden = true
         } else {
-            // Retake and Save buttons - adapt to orientation
             let buttonHeight: CGFloat = 50
             let buttonWidth: CGFloat = 120
             let spacing: CGFloat = 20
             
             if isLandscape {
-                // In landscape, stack buttons vertically on the right
                 let buttonsX = bounds.width - safeInsets.right - margin - buttonWidth
                 let totalHeight = (buttonHeight * 2) + spacing
                 let startY = (bounds.height - totalHeight) / 2
-                
                 retakeButton.frame = CGRect(x: buttonsX, y: startY, width: buttonWidth, height: buttonHeight)
                 saveButton.frame = CGRect(x: buttonsX, y: startY + buttonHeight + spacing, width: buttonWidth, height: buttonHeight)
             } else {
-                // In portrait, buttons horizontally at bottom
                 let totalWidth = (buttonWidth * 2) + spacing
                 let startX = (bounds.width - totalWidth) / 2
                 let buttonY = bounds.height - safeInsets.bottom - margin - buttonHeight
-                
                 retakeButton.frame = CGRect(x: startX, y: buttonY, width: buttonWidth, height: buttonHeight)
                 saveButton.frame = CGRect(x: startX + buttonWidth + spacing, y: buttonY, width: buttonWidth, height: buttonHeight)
             }
@@ -1419,9 +1215,7 @@ class CameraContainerView: UIView {
                 self.rotationIndicatorView.isHidden = true
             } else {
                 self.imageView.isHidden = true
-                // Always show preview layer, but show rotation indicator overlay in portrait
                 self.previewLayer?.isHidden = false
-                // Show overlay only if toggle is on, we have a last photo, and we're in landscape
                 let shouldShowOverlay = self.isLandscape && self.showOverlay && self.lastPhotoImage != nil
                 self.overlayImageView.isHidden = !shouldShowOverlay
                 self.overlayToggleButton.isSelected = self.showOverlay
@@ -1430,7 +1224,6 @@ class CameraContainerView: UIView {
     }
     
     @objc private func closeTapped() {
-        print("Close button tapped!")
         onDismiss?()
     }
     
@@ -1440,6 +1233,17 @@ class CameraContainerView: UIView {
     
     @objc private func overlayToggleTapped() {
         onToggleOverlay?()
+    }
+    
+    @objc private func cameraSwitchTapped() {
+        guard let cameraController = cameraController else { return }
+        let availableCameras = cameraController.availableCameras
+        guard availableCameras.count > 1 else { return }
+        guard let current = cameraController.currentCamera else { return }
+        let currentIndex = availableCameras.firstIndex(where: { $0.uniqueID == current.uniqueID }) ?? 0
+        let nextIndex = (currentIndex + 1) % availableCameras.count
+        let nextCamera = availableCameras[nextIndex]
+        cameraController.switchCamera(to: nextCamera)
     }
     
     @objc private func retakeTapped() {
@@ -1457,8 +1261,6 @@ class CameraContainerView: UIView {
     }
 }
 #endif
-
-// MARK: - macOS Camera Container View
 
 #if canImport(AppKit)
 class CameraContainerView: NSView {
@@ -1521,7 +1323,7 @@ class CameraContainerView: NSView {
     func setupCamera(cameraController: CameraController) {
         self.cameraController = cameraController
         let layer = AVCaptureVideoPreviewLayer(session: cameraController.captureSession)
-        layer.videoGravity = .resizeAspect  // Fit full feed without cropping
+        layer.videoGravity = .resizeAspect
         
         if let connection = layer.connection, connection.isVideoOrientationSupported {
             connection.videoOrientation = .portrait
@@ -1540,22 +1342,19 @@ class CameraContainerView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
         
-        // Overlay image view for previous photo
         overlayImageView = NSImageView()
-        overlayImageView.imageScaling = .scaleProportionallyDown  // Fit within bounds like .resizeAspect
+        overlayImageView.imageScaling = .scaleProportionallyDown
         overlayImageView.alphaValue = 0.4
         overlayImageView.isHidden = true
         addSubview(overlayImageView)
         
-        // Image view for captured photo
         imageView = NSImageView()
-        imageView.imageScaling = .scaleProportionallyDown  // Fit captured image within bounds
+        imageView.imageScaling = .scaleProportionallyDown
         imageView.wantsLayer = true
         imageView.layer?.backgroundColor = NSColor.black.cgColor
         imageView.isHidden = true
         addSubview(imageView)
         
-        // Close button
         closeButton = NSButton()
         closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close")
         closeButton.isBordered = false
@@ -1564,7 +1363,6 @@ class CameraContainerView: NSView {
         closeButton.action = #selector(closeTapped)
         addSubview(closeButton)
         
-        // Overlay toggle button
         overlayToggleButton = NSButton()
         overlayToggleButton.image = NSImage(systemSymbolName: "person.crop.rectangle.stack", accessibilityDescription: "Toggle Overlay")
         overlayToggleButton.isBordered = false
@@ -1573,7 +1371,6 @@ class CameraContainerView: NSView {
         overlayToggleButton.action = #selector(overlayToggleTapped)
         addSubview(overlayToggleButton)
         
-        // Camera switch button
         cameraSwitchButton = NSButton()
         cameraSwitchButton.image = NSImage(systemSymbolName: "camera.rotate", accessibilityDescription: "Switch Camera")
         cameraSwitchButton.isBordered = false
@@ -1582,7 +1379,6 @@ class CameraContainerView: NSView {
         cameraSwitchButton.action = #selector(cameraSwitchTapped)
         addSubview(cameraSwitchButton)
         
-        // Capture button
         captureButton = NSButton()
         captureButton.wantsLayer = true
         captureButton.layer?.backgroundColor = NSColor.white.cgColor
@@ -1594,7 +1390,6 @@ class CameraContainerView: NSView {
         captureButton.action = #selector(captureTapped)
         addSubview(captureButton)
         
-        // Retake button
         retakeButton = NSButton(title: "Retake", target: self, action: #selector(retakeTapped))
         retakeButton.wantsLayer = true
         retakeButton.bezelStyle = .rounded
@@ -1615,7 +1410,6 @@ class CameraContainerView: NSView {
         }
         addSubview(retakeButton)
         
-        // Save button
         saveButton = NSButton(title: "Use Photo", target: self, action: #selector(saveTapped))
         saveButton.wantsLayer = true
         saveButton.bezelStyle = .rounded
@@ -1646,13 +1440,9 @@ class CameraContainerView: NSView {
     }
     
     private func updateFrame() {
-        // Simple approach: let videoGravity and imageScaling handle aspect ratio
-        // All layers fill bounds, they'll maintain aspect ratio internally
         previewLayer?.frame = bounds
         imageView.frame = bounds
         overlayImageView.frame = bounds
-        
-        print("macOS Camera: All layers set to bounds: \(bounds)")
     }
     
     private func updateButtonPositions() {
@@ -1660,11 +1450,9 @@ class CameraContainerView: NSView {
         let captureButtonSize: CGFloat = 70
         let margin: CGFloat = 20
         
-        // Close button - top left corner
         closeButton.frame = CGRect(x: margin, y: bounds.height - margin - buttonSize, width: buttonSize, height: buttonSize)
         
         if !showCapturedImage {
-            // Capture button - bottom center
             let captureY = margin
             captureButton.frame = CGRect(
                 x: (bounds.width - captureButtonSize) / 2,
@@ -1672,8 +1460,6 @@ class CameraContainerView: NSView {
                 width: captureButtonSize,
                 height: captureButtonSize
             )
-            
-            // Overlay toggle button - to the left of capture button
             let toggleSpacing: CGFloat = 30
             let toggleX = captureButton.frame.minX - buttonSize - toggleSpacing
             overlayToggleButton.frame = CGRect(
@@ -1682,8 +1468,6 @@ class CameraContainerView: NSView {
                 width: buttonSize,
                 height: buttonSize
             )
-            
-            // Camera switch button - to the right of capture button
             let cameraSwitchX = captureButton.frame.maxX + toggleSpacing
             cameraSwitchButton.frame = CGRect(
                 x: cameraSwitchX,
@@ -1694,11 +1478,11 @@ class CameraContainerView: NSView {
             
             captureButton.isHidden = false
             overlayToggleButton.isHidden = false
-            cameraSwitchButton.isHidden = cameraController?.availableCameras.count ?? 0 <= 1
+            let cameraCount = cameraController?.availableCameras.count ?? 0
+            cameraSwitchButton.isHidden = cameraCount <= 1
             retakeButton.isHidden = true
             saveButton.isHidden = true
         } else {
-            // Retake and Save buttons horizontally at bottom
             let buttonHeight: CGFloat = 50
             let buttonWidth: CGFloat = 120
             let spacing: CGFloat = 20
@@ -1720,7 +1504,6 @@ class CameraContainerView: NSView {
     func updateUI() {
         DispatchQueue.main.async {
             self.updateButtonPositions()
-            
             if self.showCapturedImage, let image = self.capturedImage {
                 self.imageView.image = image
                 self.imageView.isHidden = false
@@ -1751,8 +1534,8 @@ class CameraContainerView: NSView {
         guard let cameraController = cameraController else { return }
         let availableCameras = cameraController.availableCameras
         guard availableCameras.count > 1 else { return }
-        
-        let currentIndex = availableCameras.firstIndex(of: cameraController.currentCamera!) ?? 0
+        guard let current = cameraController.currentCamera else { return }
+        let currentIndex = availableCameras.firstIndex(where: { $0.uniqueID == current.uniqueID }) ?? 0
         let nextIndex = (currentIndex + 1) % availableCameras.count
         let nextCamera = availableCameras[nextIndex]
         
