@@ -10,6 +10,10 @@ import Foundation
 import Combine
 import Photos
 
+#if canImport(AppKit)
+import AppKit
+#endif
+
 struct Photo: Identifiable, Codable {
     let id: UUID
     let date: Date
@@ -33,16 +37,13 @@ class PhotoStore: ObservableObject {
     private let settingsURL: URL
     
     init() {
-        // Setup directories
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         self.photosDirectory = documentsDirectory.appendingPathComponent("PocketPicPhotos", isDirectory: true)
         self.metadataURL = documentsDirectory.appendingPathComponent("photos_metadata.json")
         self.settingsURL = documentsDirectory.appendingPathComponent("app_settings.json")
         
-        // Create photos directory if needed
         try? FileManager.default.createDirectory(at: photosDirectory, withIntermediateDirectories: true)
         
-        // Load existing photos and settings
         loadSettings()
         loadPhotosFromAlbum()
     }
@@ -99,98 +100,49 @@ class PhotoStore: ObservableObject {
     func loadPhotosFromAlbum() {
         #if canImport(UIKit)
         let status = PHPhotoLibrary.authorizationStatus()
-        print("Photos permission status: \(status.rawValue)")
-        
-        switch status {
-        case .authorized, .limited:
-            print("Photos permission granted, fetching from album")
-            fetchPhotosFromAlbum()
-        case .notDetermined:
-            print("Photos permission not determined, requesting...")
-            PHPhotoLibrary.requestAuthorization(for: .readWrite) { (status: PHAuthorizationStatus) in
-                DispatchQueue.main.async {
-                    print("Photos permission result: \(status.rawValue)")
-                    if status == .authorized || status == .limited {
-                        self.fetchPhotosFromAlbum()
-                    } else {
-                        print("Photos permission denied, loading local photos")
-                        self.loadLocalPhotos()
-                    }
-                }
-            }
-        case .denied, .restricted:
-            print("Photos permission denied/restricted, loading local photos")
-            loadLocalPhotos()
-        @unknown default:
-            print("Unknown photos permission status, loading local photos")
-            loadLocalPhotos()
-        }
-        #elseif canImport(AppKit)
-        // macOS also has access to Photos library
+        #else
         let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-        print("macOS Photos permission status: \(status.rawValue)")
+        #endif
         
         switch status {
         case .authorized, .limited:
-            print("macOS Photos permission granted, fetching from album")
             fetchPhotosFromAlbum()
         case .notDetermined:
-            print("macOS Photos permission not determined, requesting...")
-            PHPhotoLibrary.requestAuthorization(for: .readWrite) { (status: PHAuthorizationStatus) in
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { [weak self] newStatus in
                 DispatchQueue.main.async {
-                    print("macOS Photos permission result: \(status.rawValue)")
-                    if status == .authorized || status == .limited {
-                        self.fetchPhotosFromAlbum()
+                    if newStatus == .authorized || newStatus == .limited {
+                        self?.fetchPhotosFromAlbum()
                     } else {
-                        print("macOS Photos permission denied, loading local photos")
-                        self.loadLocalPhotos()
+                        self?.loadLocalPhotos()
                     }
                 }
             }
         case .denied, .restricted:
-            print("macOS Photos permission denied/restricted, loading local photos")
             loadLocalPhotos()
         @unknown default:
-            print("Unknown macOS Photos permission status, loading local photos")
             loadLocalPhotos()
         }
-        #endif
     }
     
     private func fetchPhotosFromAlbum() {
-        print("Fetching photos from album: \(targetAlbum)")
-        
         let fetchOptions = PHFetchOptions()
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        
-        // Find the target album
         let albumFetchOptions = PHFetchOptions()
         albumFetchOptions.predicate = NSPredicate(format: "title = %@", targetAlbum)
         let albumFetchResult = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: albumFetchOptions)
         
-        print("Found \(albumFetchResult.count) albums with name: \(targetAlbum)")
-        
         if let album = albumFetchResult.firstObject {
-            // Fetch photos from the specific album
             let assets = PHAsset.fetchAssets(in: album, options: fetchOptions)
             var albumPhotos: [Photo] = []
-            
-            print("Found \(assets.count) photos in album: \(targetAlbum)")
-            
             assets.enumerateObjects { asset, _, _ in
-                let photo = Photo(
+                albumPhotos.append(Photo(
                     id: UUID(uuidString: asset.localIdentifier) ?? UUID(),
                     date: asset.creationDate ?? Date(),
                     filename: asset.localIdentifier
-                )
-                albumPhotos.append(photo)
+                ))
             }
-            
             photos = albumPhotos
-            print("Loaded \(photos.count) photos from album")
         } else {
-            // Album doesn't exist, load local photos
-            print("Album '\(targetAlbum)' not found, loading local photos")
             loadLocalPhotos()
         }
     }
@@ -200,13 +152,10 @@ class PhotoStore: ObservableObject {
             photos = []
             return
         }
-        
         do {
             let data = try Data(contentsOf: metadataURL)
-            let decoder = JSONDecoder()
-            photos = try decoder.decode([Photo].self, from: data)
+            photos = try JSONDecoder().decode([Photo].self, from: data)
         } catch {
-            print("Error loading photos metadata: \(error)")
             photos = []
         }
     }
@@ -249,91 +198,39 @@ class PhotoStore: ObservableObject {
     }
     
     func loadImage(for photo: Photo) -> PlatformImage? {
-        #if canImport(UIKit)
-        // PRIORITY: Load from local storage first (original high-quality images)
-        let imageURL = photosDirectory.appendingPathComponent(photo.filename)
-        
-        // Check if file exists before trying to load
+        let dir = photosDirectory
+        let imageURL = dir.appendingPathComponent(photo.filename)
         guard FileManager.default.fileExists(atPath: imageURL.path) else {
-            // Try Photos library fallback
-            return loadImageFromPhotosLibrary(identifier: photo.filename)
+            return loadImageFromPhotosLibrarySync(identifier: photo.filename)
         }
-        
         do {
             let imageData = try Data(contentsOf: imageURL)
-            guard let localImage = UIImage(data: imageData) else {
-                print("Error: Failed to create UIImage from data")
-                return loadImageFromPhotosLibrary(identifier: photo.filename)
-            }
-            print("Loaded high-quality image from local storage: \(imageData.count) bytes")
-            return localImage
+            #if canImport(UIKit)
+            return UIImage(data: imageData)
+            #else
+            return NSImage(data: imageData)
+            #endif
         } catch {
-            print("Error loading image from local storage: \(error.localizedDescription)")
-            return loadImageFromPhotosLibrary(identifier: photo.filename)
+            return loadImageFromPhotosLibrarySync(identifier: photo.filename)
         }
-        #elseif canImport(AppKit)
-        // PRIORITY: Load from local storage first (original high-quality images)
-        let imageURL = photosDirectory.appendingPathComponent(photo.filename)
-        
-        // Check if file exists before trying to load
-        guard FileManager.default.fileExists(atPath: imageURL.path) else {
-            // Try Photos library fallback
-            return loadImageFromPhotosLibrary(identifier: photo.filename)
-        }
-        
-        do {
-            let imageData = try Data(contentsOf: imageURL)
-            guard let localImage = NSImage(data: imageData) else {
-                print("Error: Failed to create NSImage from data")
-                return loadImageFromPhotosLibrary(identifier: photo.filename)
-            }
-            print("Loaded high-quality image from local storage: \(imageData.count) bytes")
-            return localImage
-        } catch {
-            print("Error loading image from local storage: \(error.localizedDescription)")
-            return loadImageFromPhotosLibrary(identifier: photo.filename)
-        }
-        #endif
     }
     
-    private func loadImageFromPhotosLibrary(identifier: String) -> PlatformImage? {
-        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else {
-            return nil
-        }
-        
-        let imageManager = PHImageManager.default()
-        let requestOptions = PHImageRequestOptions()
-        requestOptions.isSynchronous = true
-        requestOptions.deliveryMode = .highQualityFormat
-        requestOptions.resizeMode = .none
-        requestOptions.isNetworkAccessAllowed = true
-        requestOptions.version = .original
-        
+    private func loadImageFromPhotosLibrarySync(identifier: String) -> PlatformImage? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
+        let options = PHImageRequestOptions()
+        options.isSynchronous = true
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .none
+        options.isNetworkAccessAllowed = true
         var resultImage: PlatformImage?
-        
-        #if canImport(UIKit)
-        imageManager.requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .aspectFill, options: requestOptions) { image, info in
-            if let error = info?[PHImageErrorKey] as? Error {
-                print("Error loading from Photos library: \(error.localizedDescription)")
-            }
-            resultImage = image
+        PHImageManager.default().requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .aspectFill, options: options) { img, _ in
+            resultImage = img
         }
-        // Image loaded from Photos library
-        #elseif canImport(AppKit)
-        imageManager.requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .aspectFill, options: requestOptions) { image, info in
-            if let error = info?[PHImageErrorKey] as? Error {
-                print("Error loading from Photos library: \(error.localizedDescription)")
-            }
-            resultImage = image
-        }
-        // Image loaded from Photos library
-        #endif
-        
         return resultImage
     }
     
     func getPhotoURL(for photo: Photo) -> URL {
-        return photosDirectory.appendingPathComponent(photo.filename)
+        photosDirectory.appendingPathComponent(photo.filename)
     }
     
     func setTargetAlbum(_ albumName: String) {

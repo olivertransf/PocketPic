@@ -414,11 +414,7 @@ class CameraController: NSObject, ObservableObject {
             guard let self = self else { return }
             // Wait for setup if needed
             if self.availableCameras.isEmpty {
-                Thread.sleep(forTimeInterval: 0.5)
-                if self.availableCameras.isEmpty {
-                    print("Waiting for cameras to be discovered...")
-                    return
-                }
+                return
             }
             
             if !self.isSetup {
@@ -1307,7 +1303,7 @@ class CameraContainerView: NSView {
         didSet {
             overlayImageView?.image = lastPhotoImage
             overlayToggleButton?.isEnabled = lastPhotoImage != nil
-            overlayToggleButton?.alphaValue = lastPhotoImage != nil ? 1.0 : 0.5
+            overlayToggleButton?.contentTintColor = lastPhotoImage != nil ? .white : .disabledControlTextColor
         }
     }
     
@@ -1320,11 +1316,25 @@ class CameraContainerView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
     
+    private func makeIconButton(symbol: String, size: CGFloat = 18) -> NSButton {
+        let btn = NSButton()
+        btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        btn.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
+        btn.isBordered = false
+        btn.contentTintColor = .white
+        btn.wantsLayer = true
+        btn.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.45).cgColor
+        btn.layer?.cornerRadius = 10
+        btn.target = self
+        return btn
+    }
+    
     func setupCamera(cameraController: CameraController) {
         self.cameraController = cameraController
         let layer = AVCaptureVideoPreviewLayer(session: cameraController.captureSession)
         layer.videoGravity = .resizeAspect
-        
+        layer.cornerRadius = 12
+        layer.masksToBounds = true
         if let connection = layer.connection, connection.isVideoOrientationSupported {
             connection.videoOrientation = .portrait
         }
@@ -1355,27 +1365,15 @@ class CameraContainerView: NSView {
         imageView.isHidden = true
         addSubview(imageView)
         
-        closeButton = NSButton()
-        closeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Close")
-        closeButton.isBordered = false
-        closeButton.bezelStyle = .rounded
-        closeButton.target = self
+        closeButton = makeIconButton(symbol: "xmark.circle.fill", size: 22)
         closeButton.action = #selector(closeTapped)
         addSubview(closeButton)
         
-        overlayToggleButton = NSButton()
-        overlayToggleButton.image = NSImage(systemSymbolName: "person.crop.rectangle.stack", accessibilityDescription: "Toggle Overlay")
-        overlayToggleButton.isBordered = false
-        overlayToggleButton.bezelStyle = .rounded
-        overlayToggleButton.target = self
+        overlayToggleButton = makeIconButton(symbol: "person.crop.rectangle.stack")
         overlayToggleButton.action = #selector(overlayToggleTapped)
         addSubview(overlayToggleButton)
         
-        cameraSwitchButton = NSButton()
-        cameraSwitchButton.image = NSImage(systemSymbolName: "camera.rotate", accessibilityDescription: "Switch Camera")
-        cameraSwitchButton.isBordered = false
-        cameraSwitchButton.bezelStyle = .rounded
-        cameraSwitchButton.target = self
+        cameraSwitchButton = makeIconButton(symbol: "camera.rotate")
         cameraSwitchButton.action = #selector(cameraSwitchTapped)
         addSubview(cameraSwitchButton)
         
@@ -1440,9 +1438,12 @@ class CameraContainerView: NSView {
     }
     
     private func updateFrame() {
-        previewLayer?.frame = bounds
-        imageView.frame = bounds
-        overlayImageView.frame = bounds
+        let margin: CGFloat = 16
+        let previewRect = bounds.insetBy(dx: margin, dy: margin)
+        previewLayer?.frame = previewRect
+        imageView.frame = previewRect
+        imageView.layer?.cornerRadius = 12
+        overlayImageView.frame = previewRect
     }
     
     private func updateButtonPositions() {
