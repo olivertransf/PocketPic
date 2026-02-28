@@ -20,24 +20,12 @@ struct ExportView: View {
                         VStack(spacing: 24) {
                             ZStack {
                                 Circle()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [.blue.opacity(0.1), .purple.opacity(0.1)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
+                                    .fill(Color.appAccent.opacity(0.12))
                                     .frame(width: 120, height: 120)
                                 
                                 Image(systemName: "film")
                                     .font(.system(size: 50))
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                             }
                             
                             VStack(spacing: 8) {
@@ -57,36 +45,18 @@ struct ExportView: View {
                         VStack(spacing: 20) {
                             ZStack {
                                 Circle()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [.blue.opacity(0.2), .purple.opacity(0.2)],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
+                                    .fill(Color.appAccent.opacity(0.15))
                                     .frame(width: 100, height: 100)
                                 
                                 Image(systemName: "film.stack")
                                     .font(.system(size: 45))
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .topLeading,
-                                            endPoint: .bottomTrailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                             }
                             
                             VStack(spacing: 4) {
                                 Text("\(photoStore.photos.count)")
                                     .font(.system(size: 48, weight: .bold, design: .rounded))
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                                 
                                 Text(photoStore.photos.count == 1 ? "Photo" : "Photos")
                                     .font(.title3)
@@ -130,23 +100,15 @@ struct ExportView: View {
                                                 RoundedRectangle(cornerRadius: 12)
                                                     .fill(
                                                         exportViewModel.selectedFPS == fps ?
-                                                        LinearGradient(
-                                                            colors: [.blue, .purple],
-                                                            startPoint: .topLeading,
-                                                            endPoint: .bottomTrailing
-                                                        ) :
-                                                        LinearGradient(
-                                                            colors: [Color.secondary.opacity(0.1), Color.secondary.opacity(0.1)],
-                                                            startPoint: .topLeading,
-                                                            endPoint: .bottomTrailing
-                                                        )
+                                                        Color.appAccent :
+                                                        Color.secondary.opacity(0.12)
                                                     )
                                             )
                                             .shadow(
-                                                color: exportViewModel.selectedFPS == fps ? .blue.opacity(0.3) : .clear,
-                                                radius: exportViewModel.selectedFPS == fps ? 8 : 0,
+                                                color: exportViewModel.selectedFPS == fps ? .black.opacity(0.1) : .clear,
+                                                radius: exportViewModel.selectedFPS == fps ? 6 : 0,
                                                 x: 0,
-                                                y: exportViewModel.selectedFPS == fps ? 4 : 0
+                                                y: exportViewModel.selectedFPS == fps ? 3 : 0
                                             )
                                             .scaleEffect(exportViewModel.selectedFPS == fps ? 1.05 : 1.0)
                                     }
@@ -170,13 +132,7 @@ struct ExportView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 12) {
                                 Image(systemName: "film.fill")
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                                     .frame(width: 20)
                                 Text("\(exportViewModel.selectedFPS) frames per second")
                                     .font(.subheadline)
@@ -186,13 +142,7 @@ struct ExportView: View {
                             
                             HStack(spacing: 12) {
                                 Image(systemName: "clock.fill")
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                                     .frame(width: 20)
                                 Text("Duration: ~\(String(format: "%.1f", Double(photoStore.photos.count) / Double(exportViewModel.selectedFPS)))s")
                                     .font(.subheadline)
@@ -202,13 +152,7 @@ struct ExportView: View {
                             
                             HStack(spacing: 12) {
                                 Image(systemName: "video.fill")
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                                     .frame(width: 20)
                                 Text("1080x1920 Portrait H.264")
                                     .font(.subheadline)
@@ -236,13 +180,7 @@ struct ExportView: View {
                                     }
                                 }
                                 .progressViewStyle(.linear)
-                                .tint(
-                                    LinearGradient(
-                                        colors: [.blue, .purple],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .tint(Color.appAccent)
                                 
                                 Text("\(Int(exportViewModel.exportProgress * 100))%")
                                     .font(.subheadline)
@@ -273,15 +211,9 @@ struct ExportView: View {
                                 .foregroundColor(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 18)
-                                .background(
-                                    LinearGradient(
-                                        colors: [.blue, .purple],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .background(Color.appAccent)
                                 .cornerRadius(16)
-                                .shadow(color: .blue.opacity(0.4), radius: 12, x: 0, y: 6)
+                                .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 4)
                             }
                             .padding(.horizontal)
                             .padding(.top, 8)
@@ -307,7 +239,15 @@ struct ExportView: View {
             }
             .sheet(isPresented: $exportViewModel.showShareSheet) {
                 if let videoURL = exportViewModel.exportedVideoURL {
+                    #if os(macOS)
+                    ExportCompleteSheet(
+                        videoURL: videoURL,
+                        exportViewModel: exportViewModel,
+                        onDismiss: { exportViewModel.showShareSheet = false }
+                    )
+                    #else
                     ShareSheet(items: [videoURL])
+                    #endif
                 }
             }
         }

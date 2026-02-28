@@ -16,8 +16,10 @@ import AppKit
 typealias PlatformImage = NSImage
 #endif
 
-// Platform-specific color extensions
 extension Color {
+    static var appAccent: Color {
+        Color(red: 0.35, green: 0.45, blue: 0.78)
+    }
     static var systemBackground: Color {
         #if canImport(UIKit)
         return Color(uiColor: .systemBackground)

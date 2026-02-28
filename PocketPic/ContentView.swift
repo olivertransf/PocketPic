@@ -76,13 +76,7 @@ struct CameraPlaceholderView: View {
             
             Image(systemName: "camera.fill")
                 .font(.system(size: 60))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [.blue, .purple],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .foregroundStyle(Color.appAccent)
                 .symbolEffect(.pulse, options: .repeat(.continuous))
             
             Text("Tap to Open Camera")

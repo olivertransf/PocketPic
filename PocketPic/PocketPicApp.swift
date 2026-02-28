@@ -12,6 +12,7 @@ struct PocketPicApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .tint(Color.appAccent)
         }
     }
 }

@@ -30,13 +30,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Image(systemName: "photo.on.rectangle.angled")
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [.blue, .purple],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .foregroundStyle(Color.appAccent)
                                 .font(.title3)
                             Text("Photo Storage")
                                 .font(.headline)
@@ -50,7 +44,7 @@ struct SettingsView: View {
                                 Button(selectedAlbum) {
                                     showingAlbumPicker = true
                                 }
-                                .foregroundColor(.blue)
+                                .foregroundColor(.appAccent)
                                 .fontWeight(.medium)
                             }
                             
@@ -73,13 +67,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Image(systemName: "person.crop.rectangle.stack")
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [.blue, .purple],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .foregroundStyle(Color.appAccent)
                                 .font(.title3)
                             Text("Camera Overlay")
                                 .font(.headline)
@@ -91,13 +79,7 @@ struct SettingsView: View {
                                     .foregroundColor(.primary)
                                 Spacer()
                                 Text("\(Int(photoStore.overlayOpacity * 100))%")
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                                     .fontWeight(.semibold)
                             }
                             
@@ -112,13 +94,7 @@ struct SettingsView: View {
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
-                            .tint(
-                                LinearGradient(
-                                    colors: [.blue, .purple],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
+                            .tint(Color.appAccent)
                             .onChange(of: photoStore.overlayOpacity) { _, newValue in
                                 photoStore.setOverlayOpacity(newValue)
                             }
@@ -142,13 +118,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Image(systemName: "info.circle")
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [.blue, .purple],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .foregroundStyle(Color.appAccent)
                                 .font(.title3)
                             Text("About")
                                 .font(.headline)
@@ -186,13 +156,7 @@ struct SettingsView: View {
                                     .foregroundColor(.primary)
                                 Spacer()
                                 Text("\(photoStore.photos.count)")
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                                     .fontWeight(.semibold)
                             }
                         }
@@ -239,13 +203,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Image(systemName: "photo.on.rectangle.angled")
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [.blue, .purple],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .foregroundStyle(Color.appAccent)
                                 .font(.title3)
                             Text("Photo Storage")
                                 .font(.headline)
@@ -259,7 +217,7 @@ struct SettingsView: View {
                                 Button(selectedAlbum) {
                                     showingAlbumPicker = true
                                 }
-                                .foregroundColor(.blue)
+                                .foregroundColor(.appAccent)
                                 .fontWeight(.medium)
                             }
                             
@@ -282,13 +240,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Image(systemName: "person.crop.rectangle.stack")
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [.blue, .purple],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .foregroundStyle(Color.appAccent)
                                 .font(.title3)
                             Text("Camera Overlay")
                                 .font(.headline)
@@ -300,13 +252,7 @@ struct SettingsView: View {
                                     .foregroundColor(.primary)
                                 Spacer()
                                 Text("\(Int(photoStore.overlayOpacity * 100))%")
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                                     .fontWeight(.semibold)
                             }
                             
@@ -321,6 +267,7 @@ struct SettingsView: View {
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
+                            .tint(Color.appAccent)
                             .onChange(of: photoStore.overlayOpacity) { _, newValue in
                                 photoStore.setOverlayOpacity(newValue)
                             }
@@ -344,13 +291,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Image(systemName: "info.circle")
-                                .foregroundStyle(
-                                    LinearGradient(
-                                        colors: [.blue, .purple],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                                .foregroundStyle(Color.appAccent)
                                 .font(.title3)
                             Text("About")
                                 .font(.headline)
@@ -388,13 +329,7 @@ struct SettingsView: View {
                                     .foregroundColor(.primary)
                                 Spacer()
                                 Text("\(photoStore.photos.count)")
-                                    .foregroundStyle(
-                                        LinearGradient(
-                                            colors: [.blue, .purple],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
+                                    .foregroundStyle(Color.appAccent)
                                     .fontWeight(.semibold)
                             }
                         }
@@ -489,10 +424,19 @@ struct SettingsView: View {
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "title", ascending: true)]
         
         let albums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
-        var albumNames: [String] = ["PocketPic"] // Default album
+        var seen = Set<String>()
+        var albumNames: [String] = []
         
+        if !seen.contains("PocketPic") {
+            seen.insert("PocketPic")
+            albumNames.append("PocketPic")
+        }
         albums.enumerateObjects { collection, _, _ in
-            albumNames.append(collection.localizedTitle ?? "Untitled Album")
+            let name = collection.localizedTitle ?? "Untitled Album"
+            if !seen.contains(name) {
+                seen.insert(name)
+                albumNames.append(name)
+            }
         }
         
         availableAlbums = albumNames
@@ -531,7 +475,7 @@ struct AlbumPickerView: View {
                             Spacer()
                             if selectedAlbum == album {
                                 Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(.appAccent)
                                     .font(.system(size: 16, weight: .semibold))
                             }
                         }
@@ -557,7 +501,7 @@ struct AlbumPickerView: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         #elseif canImport(AppKit)
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 Text("Select Album")
                     .font(.title2)
@@ -571,7 +515,7 @@ struct AlbumPickerView: View {
                         Spacer()
                         if selectedAlbum == album {
                             Image(systemName: "checkmark")
-                                .foregroundColor(.blue)
+                                .foregroundColor(.appAccent)
                                 .font(.system(size: 16, weight: .semibold))
                         }
                     }
