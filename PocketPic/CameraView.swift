@@ -883,17 +883,8 @@ class CameraContainerView: UIView {
         DispatchQueue.main.async { [weak self] in
             self?.updateFrame()
             self?.updateVideoOrientation()
-            self?.updatePreviewMirroring()
             self?.previewLayer?.isHidden = false
         }
-    }
-
-    private func updatePreviewMirroring() {
-        guard let connection = previewLayer?.connection else { return }
-        guard connection.isVideoMirroringSupported else { return }
-        let isFront = cameraController?.currentCamera?.position == .front
-        connection.automaticallyAdjustsVideoMirroring = false
-        connection.isVideoMirrored = isFront
     }
     
     private func updateVideoOrientation() {
@@ -1201,10 +1192,9 @@ class CameraContainerView: UIView {
         let currentIndex = cameras.firstIndex(where: { $0.uniqueID == current.uniqueID }) ?? 0
         let nextIndex = (currentIndex + 1) % cameras.count
         cameraController.switchCamera(to: cameras[nextIndex])
-        // Wait for the switch to commit then update preview orientation and mirroring
+        // Wait for the switch to commit then update preview orientation
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             self?.updateVideoOrientation()
-            self?.updatePreviewMirroring()
         }
     }
 
