@@ -890,10 +890,10 @@ class CameraContainerView: UIView {
 
     private func updatePreviewMirroring() {
         guard let connection = previewLayer?.connection else { return }
+        guard connection.isVideoMirroringSupported else { return }
         let isFront = cameraController?.currentCamera?.position == .front
-        if connection.isVideoMirroringSupported {
-            connection.isVideoMirrored = isFront
-        }
+        connection.automaticallyAdjustsVideoMirroring = false
+        connection.isVideoMirrored = isFront
     }
     
     private func updateVideoOrientation() {
