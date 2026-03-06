@@ -173,8 +173,15 @@ class CameraController: NSObject, ObservableObject {
             mediaType: .video,
             position: .unspecified
         )
-        let allDevices = discoverySession.devices
-        let discoveredCameras = allDevices.filter { $0.hasMediaType(.video) }
+        let allDevices = discoverySession.devices.filter { $0.hasMediaType(.video) }
+
+        // Keep one front camera (prefer wide angle) and one back camera (prefer wide angle)
+        // This prevents cycling through multiple front cameras on iPad
+        let frontCamera = allDevices.first(where: { $0.position == .front && $0.deviceType == .builtInWideAngleCamera })
+            ?? allDevices.first(where: { $0.position == .front })
+        let backCamera = allDevices.first(where: { $0.position == .back && $0.deviceType == .builtInWideAngleCamera })
+            ?? allDevices.first(where: { $0.position == .back })
+        let discoveredCameras = [frontCamera, backCamera].compactMap { $0 }
         #else
         var allDevices: [AVCaptureDevice] = []
         
@@ -246,7 +253,7 @@ class CameraController: NSObject, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             let hadCameras = !self.availableCameras.isEmpty
-            let previousCamera = self.currentCamera
+            let _ = self.currentCamera
             
             self.availableCameras = discoveredCameras
             
@@ -338,7 +345,6 @@ class CameraController: NSObject, ObservableObject {
     @objc private func deviceDisconnected(_ notification: Notification) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            let status = AVCaptureDevice.authorizationStatus(for: .video)
             self.discoverCameras()
             if let newCamera = self.availableCameras.first {
                 self.switchCamera(to: newCamera)
@@ -506,13 +512,15 @@ class CameraController: NSObject, ObservableObject {
         captureSession.beginConfiguration()
         
         #if canImport(UIKit)
-        if captureSession.canSetSessionPreset(.high) {
-            captureSession.sessionPreset = .high
-        } else if captureSession.canSetSessionPreset(.photo) {
+        if captureSession.canSetSessionPreset(.photo) {
             captureSession.sessionPreset = .photo
+        } else if captureSession.canSetSessionPreset(.high) {
+            captureSession.sessionPreset = .high
         }
         #else
-        if captureSession.canSetSessionPreset(.hd1920x1080) {
+        if captureSession.canSetSessionPreset(.photo) {
+            captureSession.sessionPreset = .photo
+        } else if captureSession.canSetSessionPreset(.hd1920x1080) {
             captureSession.sessionPreset = .hd1920x1080
         } else if captureSession.canSetSessionPreset(.high) {
             captureSession.sessionPreset = .high
@@ -567,10 +575,17 @@ class CameraController: NSObject, ObservableObject {
                     connection.isVideoMirrored = true
                 }
                 #endif
-                if connection.isVideoOrientationSupported {
-                    let orientation = getVideoOrientation()
-                    connection.videoOrientation = orientation
+                #if compiler(>=5.9)
+                if #available(iOS 17.0, *) {
+                    // Orientation handled by AVCaptureDeviceRotationCoordinator via updateVideoOrientation()
+                } else if connection.isVideoOrientationSupported {
+                    connection.videoOrientation = getVideoOrientation()
                 }
+                #else
+                if connection.isVideoOrientationSupported {
+                    connection.videoOrientation = getVideoOrientation()
+                }
+                #endif
             }
             camera.unlockForConfiguration()
             isSetup = true
@@ -779,9 +794,6 @@ class CameraContainerView: UIView {
     private var overlayImageView: UIImageView!
     private var overlayToggleButton: UIButton!
     private var cameraSwitchButton: UIButton!
-    private var rotationIndicatorView: UIView!
-    private var rotationIcon: UIImageView!
-    private var rotationLabel: UILabel!
     private var orientationUpdateWorkItem: DispatchWorkItem?
     
     var onDismiss: (() -> Void)?
@@ -866,40 +878,43 @@ class CameraContainerView: UIView {
         self.cameraController = cameraController
         let layer = AVCaptureVideoPreviewLayer(session: cameraController.captureSession)
         layer.videoGravity = .resizeAspect
-        if let connection = layer.connection, connection.isVideoOrientationSupported {
-            connection.videoOrientation = .portrait
-        }
         self.layer.insertSublayer(layer, at: 0)
         self.previewLayer = layer
         DispatchQueue.main.async { [weak self] in
             self?.updateFrame()
             self?.updateVideoOrientation()
+            self?.updatePreviewMirroring()
             self?.previewLayer?.isHidden = false
         }
     }
+
+    private func updatePreviewMirroring() {
+        guard let connection = previewLayer?.connection else { return }
+        let isFront = cameraController?.currentCamera?.position == .front
+        if connection.isVideoMirroringSupported {
+            connection.isVideoMirrored = isFront
+        }
+    }
     
-    @available(iOS, deprecated: 17.0, message: "Use AVCaptureDeviceRotationCoordinator instead")
     private func updateVideoOrientation() {
         guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in
-                self?.updateVideoOrientation()
-            }
+            DispatchQueue.main.async { [weak self] in self?.updateVideoOrientation() }
             return
         }
-        
+
         guard let connection = previewLayer?.connection else { return }
-        #if canImport(UIKit)
-        if #available(iOS 17.0, *) { }
-        #endif
         guard connection.isVideoOrientationSupported else { return }
+
         let deviceOrientation = UIDevice.current.orientation
+        let isFront = cameraController?.currentCamera?.position == .front
         let videoOrientation: AVCaptureVideoOrientation
-        
+
         switch deviceOrientation {
         case .landscapeLeft:
-            videoOrientation = .landscapeRight
+            // Front camera is mirrored, so landscape directions are inverted vs back camera
+            videoOrientation = isFront ? .landscapeLeft : .landscapeRight
         case .landscapeRight:
-            videoOrientation = .landscapeLeft
+            videoOrientation = isFront ? .landscapeRight : .landscapeLeft
         case .portraitUpsideDown:
             videoOrientation = .portraitUpsideDown
         default:
@@ -907,31 +922,10 @@ class CameraContainerView: UIView {
         }
         connection.videoOrientation = videoOrientation
         cameraController?.updateVideoOrientation(videoOrientation)
-        updateRotationIndicator()
-        previewLayer?.frame = previewLayer?.frame ?? .zero
     }
     
     private func setupUI() {
         backgroundColor = .black
-        
-        rotationIndicatorView = UIView()
-        rotationIndicatorView.backgroundColor = UIColor.black.withAlphaComponent(0.8)
-        rotationIndicatorView.layer.cornerRadius = 20
-        rotationIndicatorView.isHidden = true
-        addSubview(rotationIndicatorView)
-        
-        rotationIcon = UIImageView()
-        rotationIcon.image = UIImage(systemName: "arrow.triangle.2.circlepath")
-        rotationIcon.tintColor = .white
-        rotationIcon.contentMode = .scaleAspectFit
-        rotationIndicatorView.addSubview(rotationIcon)
-        
-        rotationLabel = UILabel()
-        rotationLabel.text = "Rotate to Landscape"
-        rotationLabel.textColor = .white
-        rotationLabel.font = .systemFont(ofSize: 18, weight: .semibold)
-        rotationLabel.textAlignment = .center
-        rotationIndicatorView.addSubview(rotationLabel)
         
         overlayImageView = UIImageView()
         overlayImageView.contentMode = .scaleAspectFit
@@ -1021,37 +1015,8 @@ class CameraContainerView: UIView {
         super.layoutSubviews()
         updateFrame()
         updateButtonPositions()
-        updateRotationIndicator()
     }
     
-    private func updateRotationIndicator() {
-        let shouldShow = !isLandscape && !showCapturedImage
-        rotationIndicatorView.isHidden = !shouldShow
-        
-        if shouldShow {
-            let indicatorWidth: CGFloat = 280
-            let indicatorHeight: CGFloat = 120
-            rotationIndicatorView.frame = CGRect(
-                x: (bounds.width - indicatorWidth) / 2,
-                y: (bounds.height - indicatorHeight) / 2,
-                width: indicatorWidth,
-                height: indicatorHeight
-            )
-            let iconSize: CGFloat = 50
-            rotationIcon.frame = CGRect(
-                x: (indicatorWidth - iconSize) / 2,
-                y: 20,
-                width: iconSize,
-                height: iconSize
-            )
-            rotationLabel.frame = CGRect(
-                x: 20,
-                y: 75,
-                width: indicatorWidth - 40,
-                height: 25
-            )
-        }
-    }
     
     private func getCameraAspectRatio() -> CGFloat {
         guard let cameraController = cameraController,
@@ -1201,18 +1166,16 @@ class CameraContainerView: UIView {
     func updateUI() {
         DispatchQueue.main.async {
             self.updateButtonPositions()
-            self.updateRotationIndicator()
             
             if self.showCapturedImage, let image = self.capturedImage {
                 self.imageView.image = image
                 self.imageView.isHidden = false
                 self.previewLayer?.isHidden = true
                 self.overlayImageView.isHidden = true
-                self.rotationIndicatorView.isHidden = true
             } else {
                 self.imageView.isHidden = true
                 self.previewLayer?.isHidden = false
-                let shouldShowOverlay = self.isLandscape && self.showOverlay && self.lastPhotoImage != nil
+                let shouldShowOverlay = self.showOverlay && self.lastPhotoImage != nil
                 self.overlayImageView.isHidden = !shouldShowOverlay
                 self.overlayToggleButton.isSelected = self.showOverlay
             }
@@ -1233,15 +1196,18 @@ class CameraContainerView: UIView {
     
     @objc private func cameraSwitchTapped() {
         guard let cameraController = cameraController else { return }
-        let availableCameras = cameraController.availableCameras
-        guard availableCameras.count > 1 else { return }
-        guard let current = cameraController.currentCamera else { return }
-        let currentIndex = availableCameras.firstIndex(where: { $0.uniqueID == current.uniqueID }) ?? 0
-        let nextIndex = (currentIndex + 1) % availableCameras.count
-        let nextCamera = availableCameras[nextIndex]
-        cameraController.switchCamera(to: nextCamera)
+        let cameras = cameraController.availableCameras
+        guard cameras.count > 1, let current = cameraController.currentCamera else { return }
+        let currentIndex = cameras.firstIndex(where: { $0.uniqueID == current.uniqueID }) ?? 0
+        let nextIndex = (currentIndex + 1) % cameras.count
+        cameraController.switchCamera(to: cameras[nextIndex])
+        // Wait for the switch to commit then update preview orientation and mirroring
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.updateVideoOrientation()
+            self?.updatePreviewMirroring()
+        }
     }
-    
+
     @objc private func retakeTapped() {
         showCapturedImage = false
         capturedImage = nil
