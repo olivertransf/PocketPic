@@ -437,47 +437,14 @@ class CameraController: NSObject, ObservableObject {
         }
     }
     
-    @available(iOS, deprecated: 17.0, message: "Use AVCaptureDeviceRotationCoordinator instead")
-    private func getVideoOrientation() -> AVCaptureVideoOrientation {
-        #if canImport(UIKit)
-        let deviceOrientation = UIDevice.current.orientation
-        switch deviceOrientation {
-        case .landscapeLeft:
-            return .landscapeRight
-        case .landscapeRight:
-            return .landscapeLeft
-        case .portraitUpsideDown:
-            return .portraitUpsideDown
-        default:
-            return .portrait
+    func updatePhotoOutputRotationAngle(_ angle: CGFloat) {
+        if let connection = photoOutput.connection(with: .video) {
+            if #available(iOS 17.0, *) {
+                if connection.isVideoRotationAngleSupported(angle) {
+                    connection.videoRotationAngle = angle
+                }
+            }
         }
-        #else
-        return .portrait
-        #endif
-    }
-    
-    private func setupOrientationObserver() {
-        #if canImport(UIKit)
-        NotificationCenter.default.addObserver(
-            forName: UIDevice.orientationDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.updateVideoOrientation()
-        }
-        #endif
-    }
-    
-    @available(iOS, deprecated: 17.0, message: "Use AVCaptureDeviceRotationCoordinator instead")
-    private func updateVideoOrientation() {
-        guard let connection = photoOutput.connection(with: .video) else { return }
-        #if canImport(UIKit)
-        if #available(iOS 17.0, *) { }
-        #endif
-        guard connection.isVideoOrientationSupported else { return }
-        
-        let orientation = getVideoOrientation()
-        connection.videoOrientation = orientation
     }
     
     // WARNING: Must not call captureSession.startRunning inside begin/commit!
@@ -568,32 +535,18 @@ class CameraController: NSObject, ObservableObject {
             if let connection = photoOutput.connection(with: .video) {
                 #if canImport(UIKit)
                 if connection.isVideoMirroringSupported && camera.position == .front {
+                    connection.automaticallyAdjustsVideoMirroring = false
                     connection.isVideoMirrored = true
                 }
                 #else
                 if connection.isVideoMirroringSupported {
+                    connection.automaticallyAdjustsVideoMirroring = false
                     connection.isVideoMirrored = true
-                }
-                #endif
-                #if compiler(>=5.9)
-                if #available(iOS 17.0, *) {
-                    // Orientation handled by AVCaptureDeviceRotationCoordinator via updateVideoOrientation()
-                } else if connection.isVideoOrientationSupported {
-                    connection.videoOrientation = getVideoOrientation()
-                }
-                #else
-                if connection.isVideoOrientationSupported {
-                    connection.videoOrientation = getVideoOrientation()
                 }
                 #endif
             }
             camera.unlockForConfiguration()
             isSetup = true
-            #if canImport(UIKit)
-            setupOrientationObserver()
-            #elseif canImport(AppKit)
-            setupOrientationObserver()
-            #endif
         } catch {
             print("Error setting up camera: \(error)")
             captureSession.commitConfiguration()
@@ -648,36 +601,6 @@ class CameraController: NSObject, ObservableObject {
         photoOutput.capturePhoto(with: settings, delegate: self)
     }
     
-    @available(iOS, deprecated: 17.0, message: "Use AVCaptureDeviceRotationCoordinator instead")
-    func updateVideoOrientation(_ orientation: AVCaptureVideoOrientation) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            if let connection = self.photoOutput.connection(with: .video) {
-                #if canImport(UIKit)
-                if #available(iOS 17.0, *) { }
-                #endif
-                if connection.isVideoOrientationSupported {
-                    connection.videoOrientation = orientation
-                }
-            }
-        }
-    }
-    
-    #if canImport(UIKit)
-    @available(iOS, deprecated: 17.0, message: "Use AVCaptureDeviceRotationCoordinator instead")
-    private func videoOrientation(from deviceOrientation: UIDeviceOrientation) -> AVCaptureVideoOrientation {
-        switch deviceOrientation {
-        case .landscapeLeft:
-            return .landscapeRight
-        case .landscapeRight:
-            return .landscapeLeft
-        case .portraitUpsideDown:
-            return .portraitUpsideDown
-        default:
-            return .portrait
-        }
-    }
-    #endif
 }
 
 extension CameraController: AVCapturePhotoCaptureDelegate {
@@ -795,6 +718,9 @@ class CameraContainerView: UIView {
     private var overlayToggleButton: UIButton!
     private var cameraSwitchButton: UIButton!
     private var orientationUpdateWorkItem: DispatchWorkItem?
+    // Rotation coordinator (iOS 17+) — stored as Any to avoid @available on properties
+    private var _rotationCoordinator: Any?
+    private var _rotationObservation: Any?
     
     var onDismiss: (() -> Void)?
     var onCapture: (() -> Void)?
@@ -865,7 +791,6 @@ class CameraContainerView: UIView {
         orientationUpdateWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
-            self.updateVideoOrientation()
             self.updateFrame()
             self.setNeedsLayout()
             self.layoutIfNeeded()
@@ -882,38 +807,43 @@ class CameraContainerView: UIView {
         self.previewLayer = layer
         DispatchQueue.main.async { [weak self] in
             self?.updateFrame()
-            self?.updateVideoOrientation()
+            self?.setupCameraOrientation()
             self?.previewLayer?.isHidden = false
         }
     }
-    
-    private func updateVideoOrientation() {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in self?.updateVideoOrientation() }
-            return
+
+    private func setupCameraOrientation() {
+        if #available(iOS 17.0, *) {
+            setupRotationCoordinator()
         }
-
-        guard let connection = previewLayer?.connection else { return }
-        guard connection.isVideoOrientationSupported else { return }
-
-        let deviceOrientation = UIDevice.current.orientation
-        let isFront = cameraController?.currentCamera?.position == .front
-        let videoOrientation: AVCaptureVideoOrientation
-
-        switch deviceOrientation {
-        case .landscapeLeft:
-            // Front camera is mirrored, so landscape directions are inverted vs back camera
-            videoOrientation = isFront ? .landscapeLeft : .landscapeRight
-        case .landscapeRight:
-            videoOrientation = isFront ? .landscapeRight : .landscapeLeft
-        case .portraitUpsideDown:
-            videoOrientation = .portraitUpsideDown
-        default:
-            videoOrientation = .portrait
-        }
-        connection.videoOrientation = videoOrientation
-        cameraController?.updateVideoOrientation(videoOrientation)
     }
+
+    @available(iOS 17.0, *)
+    private func setupRotationCoordinator() {
+        _rotationObservation = nil
+        _rotationCoordinator = nil
+
+        guard let device = cameraController?.currentCamera,
+              let layer = previewLayer else { return }
+
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
+        _rotationCoordinator = coordinator
+
+        applyRotation(from: coordinator)
+
+        _rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.new]) { [weak self] coord, _ in
+            DispatchQueue.main.async {
+                self?.applyRotation(from: coord)
+            }
+        }
+    }
+
+    @available(iOS 17.0, *)
+    private func applyRotation(from coordinator: AVCaptureDevice.RotationCoordinator) {
+        previewLayer?.connection?.videoRotationAngle = coordinator.videoRotationAngleForHorizonLevelPreview
+        cameraController?.updatePhotoOutputRotationAngle(coordinator.videoRotationAngleForHorizonLevelCapture)
+    }
+    
     
     private func setupUI() {
         backgroundColor = .black
@@ -1192,9 +1122,9 @@ class CameraContainerView: UIView {
         let currentIndex = cameras.firstIndex(where: { $0.uniqueID == current.uniqueID }) ?? 0
         let nextIndex = (currentIndex + 1) % cameras.count
         cameraController.switchCamera(to: cameras[nextIndex])
-        // Wait for the switch to commit then update preview orientation
+        // Wait for the switch to commit then refresh orientation for the new device
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            self?.updateVideoOrientation()
+            self?.setupCameraOrientation()
         }
     }
 

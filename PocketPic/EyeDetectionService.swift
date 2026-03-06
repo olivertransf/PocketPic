@@ -37,7 +37,7 @@ enum EyeDetectionError: Error, LocalizedError {
 
 enum EyeDetectionService {
     
-    static func detectEyes(in image: PlatformImage) throws -> EyeLocations {
+    nonisolated static func detectEyes(in image: PlatformImage) throws -> EyeLocations {
         let (cgImage, orientation) = try makeCGImageAndOrientation(from: image)
         let (imageWidth, imageHeight) = imageDimensions(for: cgImage, orientation: orientation)
         
@@ -74,7 +74,7 @@ enum EyeDetectionService {
         )
     }
     
-    private static func imageDimensions(for cgImage: CGImage, orientation: CGImagePropertyOrientation) -> (CGFloat, CGFloat) {
+    nonisolated private static func imageDimensions(for cgImage: CGImage, orientation: CGImagePropertyOrientation) -> (CGFloat, CGFloat) {
         let w = CGFloat(cgImage.width)
         let h = CGFloat(cgImage.height)
         switch orientation {
@@ -85,7 +85,7 @@ enum EyeDetectionService {
         }
     }
     
-    private static func makeCGImageAndOrientation(from image: PlatformImage) throws -> (CGImage, CGImagePropertyOrientation) {
+    nonisolated private static func makeCGImageAndOrientation(from image: PlatformImage) throws -> (CGImage, CGImagePropertyOrientation) {
         #if canImport(UIKit)
         guard let cgImage = image.cgImage else {
             throw EyeDetectionError.imageConversionFailed
@@ -100,7 +100,7 @@ enum EyeDetectionService {
         #endif
     }
     
-    private static func centerPoint(
+    nonisolated private static func centerPoint(
         for region: VNFaceLandmarkRegion2D?,
         faceBoundingBox: CGRect,
         imageWidth: CGFloat,
