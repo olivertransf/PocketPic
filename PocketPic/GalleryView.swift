@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AVFoundation
 
 #if canImport(UIKit)
 import UIKit
@@ -88,7 +89,7 @@ struct GalleryView: View {
                     .transition(.opacity.combined(with: .scale))
                 } else {
                     ScrollView {
-                        LazyVGrid(columns: columns, spacing: 12) {
+                        LazyVGrid(columns: columns, spacing: 10) {
                             ForEach(sortedPhotos) { photo in
                                 PhotoThumbnailCard(photo: photo, isSelected: selectedPhotos.contains(photo.id), isSelectionMode: isSelectionMode)
                                     .onTapGesture {
@@ -106,7 +107,7 @@ struct GalleryView: View {
                                                 Label("Detect Eye Positions", systemImage: "eye")
                                                     .font(.body)
                                             }
-                                            .disabled(photoStore.loadImage(for: photo) == nil)
+                                            .disabled(!photoStore.canLoadImage(for: photo))
                                             Button(role: .destructive) {
                                                 withAnimation(.spring()) {
                                                     photoStore.deletePhoto(photo)
@@ -138,11 +139,26 @@ struct GalleryView: View {
                             }
                         }
                     } else {
-                        Button(action: {
-                            photoStore.refreshPhotos()
-                        }) {
-                            Image(systemName: "arrow.clockwise")
-                                .symbolEffect(.pulse, options: .speed(2))
+                        HStack(spacing: 16) {
+                            Toggle(isOn: Binding(
+                                get: { photoStore.hidePhotosInGallery },
+                                set: { photoStore.setHidePhotosInGallery($0) }
+                            )) {
+                                Image(systemName: photoStore.hidePhotosInGallery ? "eye.slash" : "eye")
+                            }
+                            .labelsHidden()
+                            Button(action: {
+                                photoStore.refreshPhotos()
+                            }) {
+                                if photoStore.isLoadingPhotoList {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                        .symbolEffect(.pulse, options: .speed(2))
+                                }
+                            }
+                            .disabled(photoStore.isLoadingPhotoList)
                         }
                     }
                 }
@@ -158,9 +174,25 @@ struct GalleryView: View {
                         Button(action: {
                             photoStore.refreshPhotos()
                         }) {
-                            Image(systemName: "arrow.clockwise")
+                            if photoStore.isLoadingPhotoList {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .frame(width: 16, height: 16)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                            }
                         }
+                        .disabled(photoStore.isLoadingPhotoList)
                     }
+                }
+                ToolbarItem(placement: .automatic) {
+                    Toggle(isOn: Binding(
+                        get: { photoStore.hidePhotosInGallery },
+                        set: { photoStore.setHidePhotosInGallery($0) }
+                    )) {
+                        Image(systemName: photoStore.hidePhotosInGallery ? "eye.slash" : "eye")
+                    }
+                    .help("Hide photos in the gallery")
                 }
                 #endif
                 
@@ -190,16 +222,15 @@ struct GalleryView: View {
                     }
                 } else {
                     ToolbarItem(placement: .primaryAction) {
+                        Button(action: {
+                            showExportSheet = true
+                        }) {
+                            Label("Export", systemImage: "square.and.arrow.up")
+                        }
+                        .disabled(photoStore.photos.isEmpty)
+                    }
+                    ToolbarItem(placement: .primaryAction) {
                         Menu {
-                            Button(action: {
-                                showExportSheet = true
-                            }) {
-                                Label("Export Montage", systemImage: "film")
-                            }
-                            .disabled(photoStore.photos.isEmpty)
-                            
-                            Divider()
-                            
                             ForEach(SortOption.allCases, id: \.self) { option in
                                 Button(action: {
                                     withAnimation {
@@ -208,7 +239,6 @@ struct GalleryView: View {
                                 }) {
                                     HStack {
                                         Text(option.rawValue)
-                                            .font(.body)
                                         if sortOption == option {
                                             Image(systemName: "checkmark")
                                         }
@@ -216,8 +246,7 @@ struct GalleryView: View {
                                 }
                             }
                         } label: {
-                            Label("More", systemImage: "ellipsis.circle")
-                                .font(.body)
+                            Image(systemName: "arrow.up.arrow.down")
                         }
                         #if canImport(AppKit)
                         .controlSize(.large)
@@ -276,15 +305,11 @@ struct GalleryView: View {
             }
             .sheet(isPresented: $exportViewModel.showShareSheet) {
                 if let videoURL = exportViewModel.exportedVideoURL {
-                    #if os(macOS)
                     ExportCompleteSheet(
                         videoURL: videoURL,
                         exportViewModel: exportViewModel,
                         onDismiss: { exportViewModel.showShareSheet = false }
                     )
-                    #else
-                    ShareSheet(items: [videoURL])
-                    #endif
                 }
             }
             #if os(macOS)
@@ -328,47 +353,62 @@ struct GalleryView: View {
 
 struct PhotoThumbnailCard: View {
     @EnvironmentObject var photoStore: PhotoStore
+    @Environment(\.displayScale) private var displayScale
     let photo: Photo
     let isSelected: Bool
     let isSelectionMode: Bool
-    
+
+    @State private var thumbnail: PlatformImage?
+
     var body: some View {
         GeometryReader { geometry in
+            let side = geometry.size.width
             ZStack {
-                if let image = photoStore.loadImage(for: photo) {
+                if photoStore.hidePhotosInGallery {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.secondary.opacity(0.1))
+                        .frame(width: side, height: side)
+                        .overlay {
+                            Image(systemName: "photo")
+                                .font(.system(size: 28, weight: .light))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(isSelected && isSelectionMode ? Color.appAccent : Color.clear, lineWidth: 2.5)
+                        )
+                } else if let image = thumbnail {
                     #if canImport(UIKit)
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.width)
+                        .frame(width: side, height: side)
                         .clipped()
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(isSelected && isSelectionMode ? Color.appAccent : Color.clear, lineWidth: 3)
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(isSelected && isSelectionMode ? Color.appAccent : Color.clear, lineWidth: 2.5)
                         )
                     #elseif canImport(AppKit)
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: geometry.size.width, height: geometry.size.width)
+                        .frame(width: side, height: side)
                         .clipped()
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(isSelected && isSelectionMode ? Color.appAccent : Color.clear, lineWidth: 3)
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(isSelected && isSelectionMode ? Color.appAccent : Color.clear, lineWidth: 2.5)
                         )
                     #endif
                 } else {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.secondary.opacity(0.1))
-                        .frame(width: geometry.size.width, height: geometry.size.width)
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.secondary.opacity(0.08))
+                        .frame(width: side, height: side)
                         .overlay(
-                            Image(systemName: "photo")
-                                .foregroundColor(.secondary)
-                                .font(.title3)
+                            ProgressView()
+                                .controlSize(.small)
                         )
                 }
-                
-                // Selection indicator
+
                 if isSelectionMode {
                     VStack {
                         HStack {
@@ -376,13 +416,13 @@ struct PhotoThumbnailCard: View {
                             ZStack {
                                 Circle()
                                     .fill(isSelected ? Color.appAccent : Color.white.opacity(0.9))
-                                    .frame(width: 28, height: 28)
-                                    .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
-                                
+                                    .frame(width: 26, height: 26)
+                                    .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+
                                 if isSelected {
                                     Image(systemName: "checkmark")
                                         .foregroundColor(.white)
-                                        .font(.system(size: 14, weight: .bold))
+                                        .font(.system(size: 13, weight: .bold))
                                         .transition(.scale.combined(with: .opacity))
                                 }
                             }
@@ -392,9 +432,22 @@ struct PhotoThumbnailCard: View {
                     }
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .shadow(color: .black.opacity(0.1), radius: 4, x: 0, y: 2)
-            .scaleEffect(isSelected && isSelectionMode ? 0.95 : 1.0)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .shadow(color: .black.opacity(0.06), radius: 3, x: 0, y: 1)
+            .scaleEffect(isSelected && isSelectionMode ? 0.97 : 1.0)
+            .onChange(of: photoStore.hidePhotosInGallery) { _, hidden in
+                if hidden { thumbnail = nil }
+            }
+            .task(id: "\(photo.id.uuidString)-\(Int(side * 100))-\(photoStore.hidePhotosInGallery)") {
+                guard !photoStore.hidePhotosInGallery, side > 1 else { return }
+                let loaded = await photoStore.loadThumbnail(for: photo, pointWidth: side, displayScale: displayScale)
+                guard !photoStore.hidePhotosInGallery else { return }
+                if let loaded {
+                    withAnimation(.easeIn(duration: 0.12)) {
+                        thumbnail = loaded
+                    }
+                }
+            }
         }
         .aspectRatio(1, contentMode: .fit)
     }
@@ -473,7 +526,7 @@ struct ExportSheetView: View {
                 }
             }
             
-            Text("1920×1080 • H.264 • 16:9")
+            Text(photoStore.useNativeResolution ? "Native resolution • HEVC" : "Auto orientation • H.264 • 1080p")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -531,57 +584,78 @@ struct ExportSheetView: View {
     }
     
     private var exportButton: some View {
-        Group {
-            if exportViewModel.isExporting {
-                VStack(spacing: 20) {
-                    ProgressView(value: exportViewModel.exportProgress) {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                            Text("Creating Video...")
-                                .font(.headline)
-                                .fontWeight(.semibold)
-                        }
-                    }
-                    .progressViewStyle(.linear)
-                    .tint(Color.appAccent)
-                    
-                    Text("\(Int(exportViewModel.exportProgress * 100))%")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
-                }
-                .padding(28)
-                .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.systemBackground)
-                        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 4)
-                )
-                .padding(.horizontal)
-            } else {
-                Button(action: {
-                    Task {
-                        await exportViewModel.exportVideo(photos: photoStore.photos, photoStore: photoStore)
-                    }
-                }) {
-                    HStack(spacing: 14) {
-                        Image(systemName: "square.and.arrow.up.fill")
-                            .font(.system(size: 20, weight: .semibold))
-                        Text("Export Montage")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                    }
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 20)
-                    .background(Color.appAccent)
-                    .cornerRadius(18)
-                    .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 4)
-                }
-                .padding(.horizontal)
-                .buttonStyle(.plain)
+        Button(action: {
+            Task {
+                await exportViewModel.exportVideo(photos: photoStore.photos, photoStore: photoStore)
             }
+        }) {
+            HStack(spacing: 14) {
+                Image(systemName: "square.and.arrow.up.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                Text("Export Montage")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+            }
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+            .background(Color.appAccent)
+            .cornerRadius(18)
+            .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 4)
+        }
+        .padding(.horizontal)
+        .buttonStyle(.plain)
+        .disabled(exportViewModel.isExporting)
+    }
+
+    private var exportingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+
+            VStack(spacing: 28) {
+                if exportViewModel.isPreparing {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .scaleEffect(1.4)
+                        .tint(.white)
+                        .frame(width: 110, height: 110)
+                } else {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.white.opacity(0.15), lineWidth: 8)
+                            .frame(width: 110, height: 110)
+
+                        Circle()
+                            .trim(from: 0, to: exportViewModel.exportProgress)
+                            .stroke(Color.white, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                            .frame(width: 110, height: 110)
+                            .rotationEffect(.degrees(-90))
+                            .animation(.easeInOut(duration: 0.3), value: exportViewModel.exportProgress)
+
+                        Text("\(Int(exportViewModel.exportProgress * 100))%")
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .foregroundColor(.white)
+                    }
+                }
+
+                VStack(spacing: 8) {
+                    Text(exportViewModel.isPreparing ? "Preparing…" : "Creating Montage")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .animation(.none, value: exportViewModel.isPreparing)
+
+                    Text("This may take a moment…")
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.7))
+                }
+            }
+            .padding(40)
+            .background(
+                RoundedRectangle(cornerRadius: 28)
+                    .fill(.ultraThinMaterial)
+            )
         }
     }
     
@@ -615,26 +689,126 @@ struct ExportSheetView: View {
                         dismiss()
                     }
                     .fontWeight(.medium)
+                    .disabled(exportViewModel.isExporting)
+                }
+            }
+            .overlay {
+                if exportViewModel.isExporting {
+                    exportingOverlay
+                        .transition(.opacity.animation(.easeInOut(duration: 0.25)))
                 }
             }
         }
     }
 }
 
-#if os(macOS)
-struct SaveToFileButton: View {
-    let sourceURL: URL
-    let onSuccess: () -> Void
-    let onError: (String) -> Void
-    
+struct ExportCompleteSheet: View {
+    let videoURL: URL
+    @ObservedObject var exportViewModel: ExportViewModel
+    let onDismiss: () -> Void
+
+    @State private var showShareSheet = false
+
     var body: some View {
-        Button("Save to File...") {
-            SaveToFileHelper.showSavePanel(sourceURL: sourceURL, onSuccess: onSuccess, onError: onError)
+        NavigationStack {
+            VStack(spacing: 32) {
+                Spacer()
+
+                VStack(spacing: 16) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.appAccent.opacity(0.12))
+                            .frame(width: 100, height: 100)
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 52))
+                            .foregroundStyle(Color.appAccent)
+                    }
+
+                    VStack(spacing: 6) {
+                        Text("Montage Ready")
+                            .font(.title3)
+                            .fontWeight(.bold)
+                        Text("Your time-lapse video has been created.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+
+                Spacer()
+
+                VStack(spacing: 12) {
+                    Button {
+                        showShareSheet = true
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 17, weight: .semibold))
+                            Text("Share")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Color.appAccent)
+                        .cornerRadius(14)
+                    }
+                    .buttonStyle(.plain)
+
+                    #if os(macOS)
+                    Button {
+                        SaveToFileHelper.showSavePanel(
+                            sourceURL: videoURL,
+                            onSuccess: { exportViewModel.showShareSheet = false },
+                            onError: { exportViewModel.errorMessage = $0 }
+                        )
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 17, weight: .semibold))
+                            Text("Save to File…")
+                                .font(.headline)
+                        }
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Color.secondary.opacity(0.1))
+                        .cornerRadius(14)
+                    }
+                    .buttonStyle(.plain)
+                    #endif
+
+                    Button("Done") {
+                        onDismiss()
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 32)
+            }
+            .background(Color.systemGroupedBackground)
+            .navigationTitle("Export Complete")
+            #if canImport(UIKit)
+            .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showShareSheet) {
+                ShareSheet(items: [videoURL])
+            }
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { onDismiss() }
+                        .fontWeight(.medium)
+                }
+            }
         }
-        .buttonStyle(.borderedProminent)
+        #if os(macOS)
+        .frame(minWidth: 320, minHeight: 340)
+        #endif
     }
 }
 
+#if os(macOS)
 private enum SaveToFileHelper {
     static func showSavePanel(sourceURL: URL, onSuccess: @escaping () -> Void, onError: @escaping (String) -> Void) {
         let savePanel = NSSavePanel()
@@ -643,7 +817,7 @@ private enum SaveToFileHelper {
         savePanel.title = "Save Video"
         savePanel.message = "Choose where to save your montage video"
         savePanel.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        
+
         savePanel.begin { response in
             guard response == .OK, let destURL = savePanel.url else { return }
             do {
@@ -659,62 +833,13 @@ private enum SaveToFileHelper {
     }
 }
 
-struct ExportCompleteSheet: View {
-    let videoURL: URL
-    @ObservedObject var exportViewModel: ExportViewModel
-    let onDismiss: () -> Void
-    @State private var showSharePicker = false
-    
-    var body: some View {
-        VStack(spacing: 24) {
-            Text("Export Complete")
-                .font(.title2)
-                .fontWeight(.semibold)
-            
-            Text("Your montage video is ready.")
-                .font(.body)
-                .foregroundColor(.secondary)
-            
-            HStack(spacing: 16) {
-                SaveToFileButton(
-                    sourceURL: videoURL,
-                    onSuccess: { exportViewModel.showShareSheet = false },
-                    onError: { exportViewModel.errorMessage = $0 }
-                )
-                
-                Button("Share") {
-                    showSharePicker = true
-                }
-                .buttonStyle(.bordered)
-                
-                Button("Cancel") {
-                    onDismiss()
-                }
-            }
-            .padding(.top, 8)
-        }
-        .frame(width: 320, height: 160)
-        .padding(24)
-        .background(SharePickerAnchorView(items: showSharePicker ? [videoURL] : [], onDismiss: {
-            showSharePicker = false
-            onDismiss()
-        }))
-    }
-}
-
 private struct SharePickerAnchorView: NSViewRepresentable {
     let items: [Any]
     let onDismiss: () -> Void
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-    
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView()
-        return view
-    }
-    
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeNSView(context: Context) -> NSView { NSView() }
+
     func updateNSView(_ nsView: NSView, context: Context) {
         guard !items.isEmpty, !context.coordinator.hasShown,
               let url = items.compactMap({ $0 as? URL }).first else { return }
@@ -722,15 +847,11 @@ private struct SharePickerAnchorView: NSViewRepresentable {
         DispatchQueue.main.async {
             let picker = NSSharingServicePicker(items: [url])
             picker.show(relativeTo: nsView.bounds, of: nsView, preferredEdge: .minY)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                onDismiss()
-            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { onDismiss() }
         }
     }
-    
-    class Coordinator {
-        var hasShown = false
-    }
+
+    class Coordinator { var hasShown = false }
 }
 #endif
 
@@ -800,17 +921,22 @@ struct EyeDetectionSheet: View {
     @State private var eyeLocations: EyeLocations?
     @State private var errorMessage: String?
     @State private var isDetecting = false
+    @State private var loadedImage: PlatformImage?
+    @State private var loadFailed = false
     
     var body: some View {
         NavigationStack {
             Group {
-                if let image = photoStore.loadImage(for: photo) {
+                if let image = loadedImage {
                     EyeDetectionContentView(
                         image: image,
                         eyeLocations: eyeLocations
                     )
-                } else {
+                } else if loadFailed {
                     ContentUnavailableView("Could not load photo", systemImage: "photo")
+                } else {
+                    ProgressView("Loading…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
             .navigationTitle("Eye Detection")
@@ -823,7 +949,7 @@ struct EyeDetectionSheet: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        runDetection(image: photoStore.loadImage(for: photo))
+                        runDetection(image: loadedImage)
                     } label: {
                         if isDetecting {
                             ProgressView()
@@ -832,11 +958,15 @@ struct EyeDetectionSheet: View {
                             Text("Detect Eyes")
                         }
                     }
-                    .disabled(isDetecting || photoStore.loadImage(for: photo) == nil)
+                    .disabled(isDetecting || loadedImage == nil)
                 }
             }
-            .onAppear {
-                runDetection(image: photoStore.loadImage(for: photo))
+            .task {
+                loadedImage = await photoStore.loadImageAsync(for: photo)
+                loadFailed = loadedImage == nil
+                if loadedImage != nil {
+                    runDetection(image: loadedImage)
+                }
             }
             .alert("Detection Error", isPresented: .constant(errorMessage != nil)) {
                 Button("OK") { errorMessage = nil }

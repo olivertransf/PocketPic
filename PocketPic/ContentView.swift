@@ -48,6 +48,9 @@ struct ContentView: View {
                 showCamera = true
             }
         }
+        #if os(macOS)
+        .tabViewStyle(.sidebarAdaptable)
+        #endif
         #if canImport(UIKit)
         .fullScreenCover(isPresented: $showCamera) {
             CameraView(onDismiss: {
@@ -71,28 +74,33 @@ struct ContentView: View {
 
 struct CameraPlaceholderView: View {
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            
-            Image(systemName: "camera.fill")
-                .font(.system(size: 60))
-                .foregroundStyle(Color.appAccent)
-                .symbolEffect(.pulse, options: .repeat(.continuous))
-            
-            Text("Tap to Open Camera")
-                .font(.title2)
-                .fontWeight(.semibold)
-            
-            Text("Take a selfie to add to your collection")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            
-            Spacer()
+        ZStack {
+            Color.systemGroupedBackground
+                .ignoresSafeArea()
+            VStack(spacing: 28) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(Color.appAccent.opacity(0.12))
+                        .frame(width: 104, height: 104)
+                    Image(systemName: "camera.aperture")
+                        .font(.system(size: 44, weight: .medium))
+                        .foregroundStyle(Color.appAccent)
+                        .symbolRenderingMode(.hierarchical)
+                }
+                VStack(spacing: 10) {
+                    Text("Capture")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    Text("Open this tab to use the camera. Your last gallery photo can appear as a faint overlay for consistent framing.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 380)
+                }
+            }
+            .padding(36)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-//        .background(Color(.systemGroupedBackground))
     }
 }
 

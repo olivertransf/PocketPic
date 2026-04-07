@@ -22,6 +22,7 @@ struct CameraView: View {
     @State private var capturedImage: PlatformImage?
     @State private var showCapturedImage = false
     @State private var showOverlay = false
+    @State private var lastPhotoPreview: PlatformImage?
     #if canImport(UIKit)
     @State private var orientation = UIDeviceOrientation.portrait
     #endif
@@ -37,7 +38,7 @@ struct CameraView: View {
             capturedImage: $capturedImage,
             showCapturedImage: $showCapturedImage,
             showOverlay: $showOverlay,
-            lastPhotoImage: getLastPhotoImage(),
+            lastPhotoImage: lastPhotoPreview,
             overlayOpacity: photoStore.overlayOpacity,
             onDismiss: { onDismiss?() ?? dismiss() },
             onCapture: capturePhoto,
@@ -66,11 +67,13 @@ struct CameraView: View {
             cameraController.stopSession()
         }
         #endif
-    }
-    
-    private func getLastPhotoImage() -> PlatformImage? {
-        guard let lastPhoto = photoStore.getLastPhoto() else { return nil }
-        return photoStore.loadImage(for: lastPhoto)
+        .task(id: photoStore.getLastPhoto()?.id) {
+            guard let last = photoStore.getLastPhoto() else {
+                lastPhotoPreview = nil
+                return
+            }
+            lastPhotoPreview = await photoStore.loadImageAsync(for: last)
+        }
     }
     
     private func capturePhoto() {
@@ -268,13 +271,9 @@ class CameraController: NSObject, ObservableObject {
                 if !self.isSetup {
                     self.configQueue.async { [weak self] in
                         guard let self = self else { return }
-                        self.setupCameraSync() // Only beginConfiguration/commitConfiguration here!
-                        // Important: Only startRunning after configuration block is done
-                        DispatchQueue.main.async { [weak self] in
-                            guard let self = self else { return }
-                            if self.isSetup && !self.captureSession.isRunning {
-                                self.captureSession.startRunning()
-                            }
+                        self.setupCameraSync()
+                        if self.isSetup && !self.captureSession.isRunning {
+                            self.captureSession.startRunning()
                         }
                     }
                 }
@@ -415,24 +414,14 @@ class CameraController: NSObject, ObservableObject {
             return
         }
 
-        // Wait until not in config
         configQueue.async { [weak self] in
             guard let self = self else { return }
-            // Wait for setup if needed
-            if self.availableCameras.isEmpty {
-                return
-            }
-            
+            if self.availableCameras.isEmpty { return }
             if !self.isSetup {
                 self.setupCameraSync()
             }
-            
-            // Wait for any config block to finish before starting session
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                if self.isSetup && !self.captureSession.isRunning && !self.isConfiguring {
-                    self.captureSession.startRunning()
-                }
+            if self.isSetup && !self.captureSession.isRunning && !self.isConfiguring {
+                self.captureSession.startRunning()
             }
         }
     }
@@ -660,6 +649,7 @@ struct CameraViewWrapper: UIViewRepresentable {
         uiView.showCapturedImage = showCapturedImage
         uiView.showOverlay = showOverlay
         uiView.overlayOpacity = overlayOpacity
+        uiView.lastPhotoImage = lastPhotoImage
         uiView.cameraController = cameraController
         uiView.updateUI()
     }
@@ -699,6 +689,7 @@ struct CameraViewWrapper: NSViewRepresentable {
         nsView.showCapturedImage = showCapturedImage
         nsView.showOverlay = showOverlay
         nsView.overlayOpacity = overlayOpacity
+        nsView.lastPhotoImage = lastPhotoImage
         nsView.cameraController = cameraController
         nsView.updateUI()
     }

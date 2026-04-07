@@ -169,6 +169,71 @@ struct SettingsView: View {
                             .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
                     )
                     .padding(.horizontal)
+                    
+                    // Export Card
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Image(systemName: "square.and.arrow.up")
+                                .foregroundStyle(Color.appAccent)
+                                .font(.title3)
+                            Text("Export")
+                                .font(.headline)
+                        }
+                        
+                        Toggle(isOn: Binding(
+                            get: { photoStore.useNativeResolution },
+                            set: { photoStore.setUseNativeResolution($0) }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Native resolution")
+                                    .foregroundColor(.primary)
+                                Text("Export at the camera's full sensor resolution. Standard mode adapts to portrait or landscape automatically.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.leading, 32)
+                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
+                    
+                    // Gallery privacy
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Image(systemName: "eye.slash")
+                                .foregroundStyle(Color.appAccent)
+                                .font(.title3)
+                            Text("Gallery")
+                                .font(.headline)
+                        }
+                        Toggle(isOn: Binding(
+                            get: { photoStore.hidePhotosInGallery },
+                            set: { photoStore.setHidePhotosInGallery($0) }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Hide photos")
+                                    .foregroundColor(.primary)
+                                Text("Gallery shows placeholders until you turn this off.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .padding(.leading, 32)
+                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
                 }
                 .padding(.vertical)
             }
@@ -276,6 +341,38 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.leading, 32)
+                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
+                    
+                    // Gallery privacy
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Image(systemName: "eye.slash")
+                                .foregroundStyle(Color.appAccent)
+                                .font(.title3)
+                            Text("Gallery")
+                                .font(.headline)
+                        }
+                        Toggle(isOn: Binding(
+                            get: { photoStore.hidePhotosInGallery },
+                            set: { photoStore.setHidePhotosInGallery($0) }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Hide photos")
+                                    .foregroundColor(.primary)
+                                Text("Gallery shows placeholders until you turn this off.")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                         .padding(.leading, 32)
                     }

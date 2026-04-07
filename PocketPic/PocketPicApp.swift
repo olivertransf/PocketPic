@@ -14,5 +14,8 @@ struct PocketPicApp: App {
             ContentView()
                 .tint(Color.appAccent)
         }
+        #if os(macOS)
+        .defaultSize(width: 960, height: 720)
+        #endif
     }
 }

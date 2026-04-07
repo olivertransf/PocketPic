@@ -20,6 +20,7 @@ import PhotosUI
 @MainActor
 class ExportViewModel: ObservableObject {
     @Published var isExporting = false
+    @Published var isPreparing = false
     @Published var exportProgress: Double = 0.0
     @Published var showShareSheet = false
     @Published var exportedVideoURL: URL?
@@ -34,133 +35,190 @@ class ExportViewModel: ObservableObject {
             errorMessage = "No photos to export"
             return
         }
-        
+
         isExporting = true
+        isPreparing = true
         exportProgress = 0.0
-        
+
+        // Yield so SwiftUI can render the overlay before we block the main thread loading images
+        await Task.yield()
+        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms — enough for a frame to render
+
+        // Capture all main-actor state before leaving the main thread
+        let fps = selectedFPS
+        let shouldAlignEyes = alignEyes
+        let useNative = photoStore.useNativeResolution
+        let sortedPhotos = photos.sorted { $0.date < $1.date }
+
+        var loadedImages: [PlatformImage] = []
+        for photo in sortedPhotos {
+            if let img = await photoStore.loadImageAsync(for: photo) {
+                loadedImages.append(img)
+            }
+        }
+
+        isPreparing = false
+
+        guard !loadedImages.isEmpty else {
+            errorMessage = "Could not load any photos"
+            isExporting = false
+            return
+        }
+
         do {
-            let videoURL = try await createVideo(from: photos, photoStore: photoStore)
+            // All heavy encoding work runs off the main thread
+            let videoURL = try await Task.detached(priority: .userInitiated) { [weak self] in
+                try await ExportViewModel.encodeVideo(
+                    images: loadedImages,
+                    fps: fps,
+                    alignEyes: shouldAlignEyes,
+                    useNativeResolution: useNative,
+                    onProgress: { progress in
+                        Task { @MainActor [weak self] in
+                            self?.exportProgress = progress
+                        }
+                    }
+                )
+            }.value
+
             exportedVideoURL = videoURL
             isExporting = false
-            // Signal that share sheet should be shown (will be handled by onChange in GalleryView)
-            await MainActor.run {
-                showShareSheet = true
-            }
+            showShareSheet = true
         } catch {
             errorMessage = "Failed to create video: \(error.localizedDescription)"
             isExporting = false
+            isPreparing = false
         }
     }
-    
-    private func createVideo(from photos: [Photo], photoStore: PhotoStore) async throws -> URL {
-        let sortedPhotos = photos.sorted { $0.date < $1.date }
-        
-        // Setup output URL
+
+    private static func encodeVideo(
+        images: [PlatformImage],
+        fps: Int,
+        alignEyes: Bool,
+        useNativeResolution: Bool,
+        onProgress: @escaping (Double) -> Void
+    ) async throws -> URL {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("PocketPic_\(Date().timeIntervalSince1970).mp4")
-        
-        // Remove existing file if needed
         try? FileManager.default.removeItem(at: outputURL)
-        
-        // Video settings - LANDSCAPE MODE
-        // 1920x1080 (16:9 aspect ratio) is optimal for:
-        // - Standard video formats
-        // - Landscape viewing
-        // - Wide-screen displays
-        let videoWidth: Int = 1920
-        let videoHeight: Int = 1080
-        let fps: Int32 = Int32(selectedFPS)
-        
-        // Setup video writer
+
+        let fpsScale: Int32 = Int32(fps)
+
+        // Determine video size from the first image
+        let videoSize: CGSize
+        let useHEVC: Bool
+        let bitrate: Int
+
+        if let first = images.first {
+            let src = first.size
+            let isLandscape = src.width > src.height
+            if useNativeResolution {
+                let maxDimension: CGFloat = 3840
+                let longSide = max(src.width, src.height)
+                let scale = longSide > maxDimension ? maxDimension / longSide : 1.0
+                let w = max(2, Int(src.width * scale / 2) * 2)
+                let h = max(2, Int(src.height * scale / 2) * 2)
+                videoSize = CGSize(width: w, height: h)
+                let pixels = w * h
+                bitrate = min(max(pixels / 20, 8_000_000), 40_000_000)
+                useHEVC = true
+            } else {
+                videoSize = isLandscape
+                    ? CGSize(width: 1920, height: 1080)
+                    : CGSize(width: 1080, height: 1920)
+                bitrate = 8_000_000
+                useHEVC = false
+            }
+        } else {
+            videoSize = CGSize(width: 1080, height: 1920)
+            bitrate = 8_000_000
+            useHEVC = false
+        }
+
+        let videoWidth = Int(videoSize.width)
+        let videoHeight = Int(videoSize.height)
+
         let videoWriter = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
-        
+
+        let codec: AVVideoCodecType = useHEVC ? .hevc : .h264
+        var compressionProps: [String: Any] = [AVVideoAverageBitRateKey: bitrate]
+        if codec == .h264 {
+            compressionProps[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
+        }
         let videoSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoCodecKey: codec,
             AVVideoWidthKey: videoWidth,
             AVVideoHeightKey: videoHeight,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 6_000_000,
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
-            ]
+            AVVideoCompressionPropertiesKey: compressionProps
         ]
-        
+
         let videoWriterInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         videoWriterInput.expectsMediaDataInRealTime = false
-        
+
         let pixelBufferAttributes: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
             kCVPixelBufferWidthKey as String: videoWidth,
             kCVPixelBufferHeightKey as String: videoHeight
         ]
-        
-        let pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(
+
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: videoWriterInput,
             sourcePixelBufferAttributes: pixelBufferAttributes
         )
-        
+
         guard videoWriter.canAdd(videoWriterInput) else {
             throw NSError(domain: "PocketPic", code: -1, userInfo: [NSLocalizedDescriptionKey: "Cannot add video input"])
         }
-        
         videoWriter.add(videoWriterInput)
-        
-        // Start writing
+
         guard videoWriter.startWriting() else {
             throw NSError(domain: "PocketPic", code: -1, userInfo: [NSLocalizedDescriptionKey: "Cannot start writing"])
         }
-        
         videoWriter.startSession(atSourceTime: .zero)
-        
+
         var frameCount: Int64 = 0
-        var referenceEyesInFrame: (left: CGPoint, right: CGPoint)?
-        let frameSize = CGSize(width: videoWidth, height: videoHeight)
-        
-        for (index, photo) in sortedPhotos.enumerated() {
+        var referenceEyes: (left: CGPoint, right: CGPoint)?
+
+        for (index, image) in images.enumerated() {
             autoreleasepool {
-                if let image = photoStore.loadImage(for: photo) {
-                    let presentationTime = CMTime(value: frameCount, timescale: fps)
-                    while !videoWriterInput.isReadyForMoreMediaData {
-                        Thread.sleep(forTimeInterval: 0.01)
-                    }
-                    let result: CVPixelBuffer?
-                    if alignEyes {
-                        let (buffer, refEyes) = createAlignedPixelBuffer(
-                            from: image,
-                            size: frameSize,
-                            referenceEyesInFrame: referenceEyesInFrame,
-                            isReferenceFrame: index == 0
-                        )
-                        if let refEyes = refEyes {
-                            referenceEyesInFrame = refEyes
-                        }
-                        result = buffer
-                    } else {
-                        result = createPixelBuffer(from: image, size: frameSize)
-                    }
-                    if let pixelBuffer = result {
-                        pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: presentationTime)
-                        frameCount += 1
-                        Task { @MainActor in
-                            self.exportProgress = Double(index + 1) / Double(sortedPhotos.count)
-                        }
-                    }
+                let presentationTime = CMTime(value: frameCount, timescale: fpsScale)
+                while !videoWriterInput.isReadyForMoreMediaData {
+                    Thread.sleep(forTimeInterval: 0.01)
+                }
+
+                let result: CVPixelBuffer?
+                if alignEyes {
+                    let (buffer, refEyes) = makeAlignedPixelBuffer(
+                        from: image,
+                        size: videoSize,
+                        referenceEyes: referenceEyes,
+                        isReferenceFrame: index == 0
+                    )
+                    if let refEyes { referenceEyes = refEyes }
+                    result = buffer
+                } else {
+                    result = makePixelBuffer(from: image, size: videoSize)
+                }
+
+                if let pb = result {
+                    adaptor.append(pb, withPresentationTime: presentationTime)
+                    frameCount += 1
+                    onProgress(Double(index + 1) / Double(images.count))
                 }
             }
         }
-        
-        // Finish writing
+
         videoWriterInput.markAsFinished()
-        
         await videoWriter.finishWriting()
-        
+
         guard videoWriter.status == .completed else {
             throw NSError(domain: "PocketPic", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video writing failed"])
         }
-        
+
         return outputURL
     }
     
-    private func createPixelBuffer(from image: PlatformImage, size: CGSize) -> CVPixelBuffer? {
+    private static func makePixelBuffer(from image: PlatformImage, size: CGSize) -> CVPixelBuffer? {
         let attrs = [
             kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue!,
             kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue!
@@ -233,43 +291,35 @@ class ExportViewModel: ObservableObject {
         return buffer
     }
     
-    private func createAlignedPixelBuffer(
+    private static func makeAlignedPixelBuffer(
         from image: PlatformImage,
         size: CGSize,
-        referenceEyesInFrame: (left: CGPoint, right: CGPoint)?,
+        referenceEyes: (left: CGPoint, right: CGPoint)?,
         isReferenceFrame: Bool
     ) -> (CVPixelBuffer?, (left: CGPoint, right: CGPoint)?) {
         let imageSize = image.size
         guard imageSize.width > 0, imageSize.height > 0 else {
-            return (createPixelBuffer(from: image, size: size), nil)
+            return (makePixelBuffer(from: image, size: size), nil)
         }
-        
-        let eyesResult: EyeLocations?
-        do {
-            eyesResult = try EyeDetectionService.detectEyes(in: image)
-        } catch {
-            return (createPixelBuffer(from: image, size: size), nil)
-        }
-        
+
+        let eyesResult = try? EyeDetectionService.detectEyes(in: image)
         guard let eyes = eyesResult else {
-            return (createPixelBuffer(from: image, size: size), nil)
+            return (makePixelBuffer(from: image, size: size), nil)
         }
-        
+
         let imageAspect = imageSize.width / imageSize.height
         let videoAspect = size.width / size.height
-        
+
         var drawRect: CGRect
         if imageAspect > videoAspect {
             let scaledWidth = size.height * imageAspect
-            let xOffset = (size.width - scaledWidth) / 2
-            drawRect = CGRect(x: xOffset, y: 0, width: scaledWidth, height: size.height)
+            drawRect = CGRect(x: (size.width - scaledWidth) / 2, y: 0, width: scaledWidth, height: size.height)
         } else {
             let scaledHeight = size.width / imageAspect
-            let yOffset = (size.height - scaledHeight) / 2
-            drawRect = CGRect(x: 0, y: yOffset, width: size.width, height: scaledHeight)
+            drawRect = CGRect(x: 0, y: (size.height - scaledHeight) / 2, width: size.width, height: scaledHeight)
         }
-        
-        if isReferenceFrame || referenceEyesInFrame == nil {
+
+        if isReferenceFrame || referenceEyes == nil {
             let refLeft = CGPoint(
                 x: drawRect.origin.x + (eyes.leftEye.x / imageSize.width) * drawRect.width,
                 y: drawRect.origin.y + (1 - eyes.leftEye.y / imageSize.height) * drawRect.height
@@ -278,43 +328,36 @@ class ExportViewModel: ObservableObject {
                 x: drawRect.origin.x + (eyes.rightEye.x / imageSize.width) * drawRect.width,
                 y: drawRect.origin.y + (1 - eyes.rightEye.y / imageSize.height) * drawRect.height
             )
-            let refEyes = (left: refLeft, right: refRight)
-            return (createPixelBuffer(from: image, size: size), refEyes)
+            return (makePixelBuffer(from: image, size: size), (left: refLeft, right: refRight))
         }
-        
-        guard let ref = referenceEyesInFrame else {
-            return (createPixelBuffer(from: image, size: size), nil)
+
+        guard let ref = referenceEyes else {
+            return (makePixelBuffer(from: image, size: size), nil)
         }
-        
+
         let srcLeft = CGPoint(x: eyes.leftEye.x, y: imageSize.height - eyes.leftEye.y)
         let srcRight = CGPoint(x: eyes.rightEye.x, y: imageSize.height - eyes.rightEye.y)
-        
+
         let srcDelta = CGPoint(x: srcRight.x - srcLeft.x, y: srcRight.y - srcLeft.y)
         let refDelta = CGPoint(x: ref.right.x - ref.left.x, y: ref.right.y - ref.left.y)
-        
+
         let srcDist = hypot(srcDelta.x, srcDelta.y)
         let refDist = hypot(refDelta.x, refDelta.y)
         guard srcDist > 0.1 else {
-            return (createPixelBuffer(from: image, size: size), nil)
+            return (makePixelBuffer(from: image, size: size), nil)
         }
-        
+
         let scale = refDist / srcDist
         let theta = atan2(refDelta.y, refDelta.x) - atan2(srcDelta.y, srcDelta.x)
-        
         let transform = CGAffineTransform(translationX: -srcLeft.x, y: -srcLeft.y)
             .concatenating(CGAffineTransform(rotationAngle: theta))
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
             .concatenating(CGAffineTransform(translationX: ref.left.x, y: ref.left.y))
-        
-        return (createPixelBufferWithTransform(
-            from: image,
-            size: size,
-            imageSize: imageSize,
-            transform: transform
-        ), nil)
+
+        return (makePixelBufferWithTransform(from: image, size: size, imageSize: imageSize, transform: transform), nil)
     }
-    
-    private func createPixelBufferWithTransform(
+
+    private static func makePixelBufferWithTransform(
         from image: PlatformImage,
         size: CGSize,
         imageSize: CGSize,
@@ -358,7 +401,7 @@ class ExportViewModel: ObservableObject {
         }
         
         context.clear(CGRect(origin: .zero, size: size))
-        context.setFillColor(CGColor.black)
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
         context.fill(CGRect(origin: .zero, size: size))
         
         context.saveGState()

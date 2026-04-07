@@ -9,10 +9,34 @@ import SwiftUI
 import Foundation
 import Combine
 import Photos
+import ImageIO
 
 #if canImport(AppKit)
 import AppKit
 #endif
+
+#if canImport(UIKit)
+import UIKit
+#endif
+
+private enum ThumbnailDecode {
+    static func downsampleImage(at url: URL, maxPixelDimension: CGFloat) -> PlatformImage? {
+    let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceThumbnailMaxPixelSize: max(64, maxPixelDimension) as NSNumber
+    ]
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let cgImage = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else { return nil }
+    #if canImport(UIKit)
+    return UIImage(cgImage: cgImage)
+    #elseif canImport(AppKit)
+    return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    #else
+    return nil
+    #endif
+    }
+}
 
 struct Photo: Identifiable, Codable {
     let id: UUID
@@ -31,6 +55,9 @@ class PhotoStore: ObservableObject {
     @Published var photos: [Photo] = []
     @Published var targetAlbum: String = "PocketPic"
     @Published var overlayOpacity: Double = 0.4
+    @Published var useNativeResolution: Bool = false
+    @Published var hidePhotosInGallery: Bool = false
+    @Published private(set) var isLoadingPhotoList: Bool = false
     
     private let photosDirectory: URL
     private let metadataURL: URL
@@ -125,25 +152,36 @@ class PhotoStore: ObservableObject {
     }
     
     private func fetchPhotosFromAlbum() {
-        let fetchOptions = PHFetchOptions()
-        fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
-        let albumFetchOptions = PHFetchOptions()
-        albumFetchOptions.predicate = NSPredicate(format: "title = %@", targetAlbum)
-        let albumFetchResult = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: albumFetchOptions)
-        
-        if let album = albumFetchResult.firstObject {
-            let assets = PHAsset.fetchAssets(in: album, options: fetchOptions)
-            var albumPhotos: [Photo] = []
-            assets.enumerateObjects { asset, _, _ in
-                albumPhotos.append(Photo(
-                    id: UUID(uuidString: asset.localIdentifier) ?? UUID(),
-                    date: asset.creationDate ?? Date(),
-                    filename: asset.localIdentifier
-                ))
+        let albumName = targetAlbum
+        isLoadingPhotoList = true
+        Task {
+            let built: [Photo]? = await Task.detached(priority: .userInitiated) {
+                let fetchOptions = PHFetchOptions()
+                fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+                let albumFetchOptions = PHFetchOptions()
+                albumFetchOptions.predicate = NSPredicate(format: "title = %@", albumName)
+                let albumFetchResult = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: albumFetchOptions)
+                guard let album = albumFetchResult.firstObject else { return nil }
+                let assets = PHAsset.fetchAssets(in: album, options: fetchOptions)
+                var albumPhotos: [Photo] = []
+                albumPhotos.reserveCapacity(assets.count)
+                assets.enumerateObjects { asset, _, _ in
+                    albumPhotos.append(Photo(
+                        id: UUID(uuidString: asset.localIdentifier) ?? UUID(),
+                        date: asset.creationDate ?? Date(),
+                        filename: asset.localIdentifier
+                    ))
+                }
+                return albumPhotos
+            }.value
+            await MainActor.run {
+                isLoadingPhotoList = false
+                if let built {
+                    photos = built
+                } else {
+                    loadLocalPhotos()
+                }
             }
-            photos = albumPhotos
-        } else {
-            loadLocalPhotos()
         }
     }
     
@@ -197,36 +235,80 @@ class PhotoStore: ObservableObject {
         return photos.sorted(by: { $0.date > $1.date }).first
     }
     
-    func loadImage(for photo: Photo) -> PlatformImage? {
-        let dir = photosDirectory
-        let imageURL = dir.appendingPathComponent(photo.filename)
-        guard FileManager.default.fileExists(atPath: imageURL.path) else {
-            return loadImageFromPhotosLibrarySync(identifier: photo.filename)
+    func canLoadImage(for photo: Photo) -> Bool {
+        let imageURL = photosDirectory.appendingPathComponent(photo.filename)
+        if FileManager.default.fileExists(atPath: imageURL.path) { return true }
+        return PHAsset.fetchAssets(withLocalIdentifiers: [photo.filename], options: nil).firstObject != nil
+    }
+    
+    func loadThumbnail(for photo: Photo, pointWidth: CGFloat, displayScale: CGFloat) async -> PlatformImage? {
+        let px = min(900, max(96, pointWidth * displayScale))
+        let imageURL = photosDirectory.appendingPathComponent(photo.filename)
+        if FileManager.default.fileExists(atPath: imageURL.path) {
+            return await Task.detached(priority: .userInitiated) {
+                ThumbnailDecode.downsampleImage(at: imageURL, maxPixelDimension: px)
+            }.value
         }
-        do {
-            let imageData = try Data(contentsOf: imageURL)
-            #if canImport(UIKit)
-            return UIImage(data: imageData)
-            #else
-            return NSImage(data: imageData)
-            #endif
-        } catch {
-            return loadImageFromPhotosLibrarySync(identifier: photo.filename)
+        return await loadThumbnailFromPhotosLibrary(identifier: photo.filename, maxPixelDimension: px)
+    }
+    
+    func loadImageAsync(for photo: Photo) async -> PlatformImage? {
+        let imageURL = photosDirectory.appendingPathComponent(photo.filename)
+        if FileManager.default.fileExists(atPath: imageURL.path) {
+            return await Task.detached(priority: .userInitiated) {
+                guard let data = try? Data(contentsOf: imageURL) else { return nil as PlatformImage? }
+                #if canImport(UIKit)
+                return UIImage(data: data)
+                #else
+                return NSImage(data: data)
+                #endif
+            }.value
+        }
+        return await loadFullImageFromPhotosLibrary(identifier: photo.filename)
+    }
+    
+    private func loadThumbnailFromPhotosLibrary(identifier: String, maxPixelDimension: CGFloat) async -> PlatformImage? {
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
+        let size = CGSize(width: maxPixelDimension, height: maxPixelDimension)
+        return await withCheckedContinuation { continuation in
+            let opts = PHImageRequestOptions()
+            opts.deliveryMode = .highQualityFormat
+            opts.resizeMode = .fast
+            opts.isNetworkAccessAllowed = true
+            var didResume = false
+            PHImageManager.default().requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: opts) { image, info in
+                guard !didResume else { return }
+                if let cancelled = info?[PHImageCancelledKey] as? Bool, cancelled {
+                    didResume = true
+                    continuation.resume(returning: nil)
+                    return
+                }
+                didResume = true
+                continuation.resume(returning: image)
+            }
         }
     }
     
-    private func loadImageFromPhotosLibrarySync(identifier: String) -> PlatformImage? {
+    private func loadFullImageFromPhotosLibrary(identifier: String) async -> PlatformImage? {
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
-        let options = PHImageRequestOptions()
-        options.isSynchronous = true
-        options.deliveryMode = .highQualityFormat
-        options.resizeMode = .none
-        options.isNetworkAccessAllowed = true
-        var resultImage: PlatformImage?
-        PHImageManager.default().requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .aspectFill, options: options) { img, _ in
-            resultImage = img
+        return await withCheckedContinuation { continuation in
+            let opts = PHImageRequestOptions()
+            opts.isNetworkAccessAllowed = true
+            var didResume = false
+            PHImageManager.default().requestImageDataAndOrientation(for: asset, options: opts) { data, _, _, info in
+                guard !didResume else { return }
+                didResume = true
+                guard let data = data else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                #if canImport(UIKit)
+                continuation.resume(returning: UIImage(data: data))
+                #else
+                continuation.resume(returning: NSImage(data: data))
+                #endif
+            }
         }
-        return resultImage
     }
     
     func getPhotoURL(for photo: Photo) -> URL {
@@ -250,6 +332,16 @@ class PhotoStore: ObservableObject {
     }
     
     
+    func setUseNativeResolution(_ value: Bool) {
+        useNativeResolution = value
+        saveSettings()
+    }
+    
+    func setHidePhotosInGallery(_ value: Bool) {
+        hidePhotosInGallery = value
+        saveSettings()
+    }
+    
     private func loadSettings() {
         guard FileManager.default.fileExists(atPath: settingsURL.path) else {
             return
@@ -261,6 +353,8 @@ class PhotoStore: ObservableObject {
             let settings = try decoder.decode(AppSettings.self, from: data)
             targetAlbum = settings.targetAlbum
             overlayOpacity = settings.overlayOpacity
+            useNativeResolution = settings.useNativeResolution ?? false
+            hidePhotosInGallery = settings.hidePhotosInGallery ?? settings.privacyBlurGalleryPreviews ?? false
         } catch {
             print("Error loading settings: \(error)")
         }
@@ -268,7 +362,12 @@ class PhotoStore: ObservableObject {
     
     private func saveSettings() {
         do {
-            let settings = AppSettings(targetAlbum: targetAlbum, overlayOpacity: overlayOpacity)
+            let settings = AppSettings(
+                targetAlbum: targetAlbum,
+                overlayOpacity: overlayOpacity,
+                useNativeResolution: useNativeResolution,
+                hidePhotosInGallery: hidePhotosInGallery
+            )
             let encoder = JSONEncoder()
             let data = try encoder.encode(settings)
             try data.write(to: settingsURL)
@@ -354,5 +453,8 @@ class PhotoStore: ObservableObject {
 struct AppSettings: Codable {
     let targetAlbum: String
     let overlayOpacity: Double
+    var useNativeResolution: Bool?
+    var hidePhotosInGallery: Bool?
+    var privacyBlurGalleryPreviews: Bool?
 }
 

@@ -154,7 +154,7 @@ struct ExportView: View {
                                 Image(systemName: "video.fill")
                                     .foregroundStyle(Color.appAccent)
                                     .frame(width: 20)
-                                Text("1080x1920 Portrait H.264")
+                                Text("Auto orientation • H.264 • 1080p")
                                     .font(.subheadline)
                                     .foregroundColor(.primary)
                                 Spacer()

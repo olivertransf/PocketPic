@@ -1,0 +1,11 @@
+---
+description: PocketPic gallery eye toggle hides photos (placeholders), not blur
+globs: PocketPic/**/*.swift
+alwaysApply: false
+---
+
+# Gallery privacy (eye control)
+
+When the user asks for privacy or "hide" in the gallery: **do not decode or show thumbnails**—show neutral placeholders only. Do not implement blur-for-privacy unless they explicitly ask for blur.
+
+The toolbar eye toggle maps to `PhotoStore.hidePhotosInGallery` and `setHidePhotosInGallery`.
