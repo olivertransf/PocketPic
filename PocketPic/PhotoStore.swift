@@ -57,22 +57,35 @@ class PhotoStore: ObservableObject {
     @Published var overlayOpacity: Double = 0.4
     @Published var useNativeResolution: Bool = false
     @Published var hidePhotosInGallery: Bool = false
+    @Published var defaultCameraPosition: String = "front"
     @Published private(set) var isLoadingPhotoList: Bool = false
-    
+
+    // Bounded thumbnail cache — NSCache evicts automatically under memory pressure.
+    private let thumbnailCache: NSCache<NSString, PlatformImage> = {
+        let c = NSCache<NSString, PlatformImage>()
+        c.countLimit = 300
+        c.totalCostLimit = 120 * 1024 * 1024  // 120 MB
+        return c
+    }()
+
+    // Tracks in-flight PHImageManager requests so we can cancel them.
+    private var imageRequestIDs: [String: PHImageRequestID] = [:]
+
     private let photosDirectory: URL
     private let metadataURL: URL
     private let settingsURL: URL
-    
+
     init() {
         let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         self.photosDirectory = documentsDirectory.appendingPathComponent("PocketPicPhotos", isDirectory: true)
         self.metadataURL = documentsDirectory.appendingPathComponent("photos_metadata.json")
         self.settingsURL = documentsDirectory.appendingPathComponent("app_settings.json")
-        
+
         try? FileManager.default.createDirectory(at: photosDirectory, withIntermediateDirectories: true)
-        
+
         loadSettings()
         loadPhotosFromAlbum()
+        setupMemoryWarningObserver()
     }
     
     func savePhoto(_ image: PlatformImage) {
@@ -231,6 +244,34 @@ class PhotoStore: ObservableObject {
         saveMetadata()
     }
     
+    private func setupMemoryWarningObserver() {
+        #if canImport(UIKit)
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.thumbnailCache.removeAllObjects()
+        }
+        #elseif canImport(AppKit)
+        // On macOS there is no memory warning API; clear the cache when the
+        // application resigns active (user switches away for a while).
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.thumbnailCache.removeAllObjects()
+        }
+        #endif
+    }
+
+    func cancelThumbnailRequest(for photo: Photo) {
+        if let rid = imageRequestIDs.removeValue(forKey: photo.id.uuidString) {
+            PHImageManager.default().cancelImageRequest(rid)
+        }
+    }
+
     func getLastPhoto() -> Photo? {
         return photos.sorted(by: { $0.date > $1.date }).first
     }
@@ -242,14 +283,44 @@ class PhotoStore: ObservableObject {
     }
     
     func loadThumbnail(for photo: Photo, pointWidth: CGFloat, displayScale: CGFloat) async -> PlatformImage? {
-        let px = min(900, max(96, pointWidth * displayScale))
+        // Cap at 400 logical points × scale — enough for a 3-column grid at 3× retina.
+        let px = min(400 * displayScale, max(96, pointWidth * displayScale))
+        let cacheKey = NSString(string: "\(photo.id.uuidString)-\(Int(px))")
+
+        if let cached = thumbnailCache.object(forKey: cacheKey) { return cached }
+
         let imageURL = photosDirectory.appendingPathComponent(photo.filename)
+        let result: PlatformImage?
         if FileManager.default.fileExists(atPath: imageURL.path) {
-            return await Task.detached(priority: .userInitiated) {
+            result = await Task.detached(priority: .userInitiated) {
                 ThumbnailDecode.downsampleImage(at: imageURL, maxPixelDimension: px)
             }.value
+        } else {
+            result = await loadThumbnailFromPhotosLibrary(
+                identifier: photo.filename,
+                photoID: photo.id.uuidString,
+                maxPixelDimension: px
+            )
         }
-        return await loadThumbnailFromPhotosLibrary(identifier: photo.filename, maxPixelDimension: px)
+
+        if let img = result {
+            let cost = estimatedByteCost(of: img)
+            thumbnailCache.setObject(img, forKey: cacheKey, cost: cost)
+        }
+        return result
+    }
+
+    private func estimatedByteCost(of image: PlatformImage) -> Int {
+        #if canImport(UIKit)
+        return Int(image.size.width * image.size.height * image.scale * image.scale * 4)
+        #elseif canImport(AppKit)
+        let rep = image.representations.first
+        let w = rep.map { CGFloat($0.pixelsWide) } ?? image.size.width
+        let h = rep.map { CGFloat($0.pixelsHigh) } ?? image.size.height
+        return Int(w * h * 4)
+        #else
+        return 0
+        #endif
     }
     
     func loadImageAsync(for photo: Photo) async -> PlatformImage? {
@@ -267,7 +338,11 @@ class PhotoStore: ObservableObject {
         return await loadFullImageFromPhotosLibrary(identifier: photo.filename)
     }
     
-    private func loadThumbnailFromPhotosLibrary(identifier: String, maxPixelDimension: CGFloat) async -> PlatformImage? {
+    private func loadThumbnailFromPhotosLibrary(
+        identifier: String,
+        photoID: String,
+        maxPixelDimension: CGFloat
+    ) async -> PlatformImage? {
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject else { return nil }
         let size = CGSize(width: maxPixelDimension, height: maxPixelDimension)
         return await withCheckedContinuation { continuation in
@@ -276,8 +351,11 @@ class PhotoStore: ObservableObject {
             opts.resizeMode = .fast
             opts.isNetworkAccessAllowed = true
             var didResume = false
-            PHImageManager.default().requestImage(for: asset, targetSize: size, contentMode: .aspectFill, options: opts) { image, info in
+            let rid = PHImageManager.default().requestImage(
+                for: asset, targetSize: size, contentMode: .aspectFill, options: opts
+            ) { [weak self] image, info in
                 guard !didResume else { return }
+                self?.imageRequestIDs.removeValue(forKey: photoID)
                 if let cancelled = info?[PHImageCancelledKey] as? Bool, cancelled {
                     didResume = true
                     continuation.resume(returning: nil)
@@ -286,6 +364,7 @@ class PhotoStore: ObservableObject {
                 didResume = true
                 continuation.resume(returning: image)
             }
+            imageRequestIDs[photoID] = rid
         }
     }
     
@@ -341,6 +420,11 @@ class PhotoStore: ObservableObject {
         hidePhotosInGallery = value
         saveSettings()
     }
+
+    func setDefaultCameraPosition(_ position: String) {
+        defaultCameraPosition = position
+        saveSettings()
+    }
     
     private func loadSettings() {
         guard FileManager.default.fileExists(atPath: settingsURL.path) else {
@@ -355,6 +439,7 @@ class PhotoStore: ObservableObject {
             overlayOpacity = settings.overlayOpacity
             useNativeResolution = settings.useNativeResolution ?? false
             hidePhotosInGallery = settings.hidePhotosInGallery ?? settings.privacyBlurGalleryPreviews ?? false
+            defaultCameraPosition = settings.defaultCameraPosition ?? "front"
         } catch {
             print("Error loading settings: \(error)")
         }
@@ -366,7 +451,8 @@ class PhotoStore: ObservableObject {
                 targetAlbum: targetAlbum,
                 overlayOpacity: overlayOpacity,
                 useNativeResolution: useNativeResolution,
-                hidePhotosInGallery: hidePhotosInGallery
+                hidePhotosInGallery: hidePhotosInGallery,
+                defaultCameraPosition: defaultCameraPosition
             )
             let encoder = JSONEncoder()
             let data = try encoder.encode(settings)
@@ -456,5 +542,6 @@ struct AppSettings: Codable {
     var useNativeResolution: Bool?
     var hidePhotosInGallery: Bool?
     var privacyBlurGalleryPreviews: Bool?
+    var defaultCameraPosition: String?
 }
 

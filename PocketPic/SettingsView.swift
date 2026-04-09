@@ -63,6 +63,47 @@ struct SettingsView: View {
                     )
                     .padding(.horizontal)
                     
+                    // Camera Card
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Image(systemName: "camera")
+                                .foregroundStyle(Color.appAccent)
+                                .font(.title3)
+                            Text("Camera")
+                                .font(.headline)
+                        }
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("Default Camera")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Picker("", selection: Binding(
+                                    get: { photoStore.defaultCameraPosition },
+                                    set: { photoStore.setDefaultCameraPosition($0) }
+                                )) {
+                                    Text("Front").tag("front")
+                                    Text("Back").tag("back")
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(width: 140)
+                            }
+
+                            Text("Which camera opens when you start a session")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.leading, 32)
+                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
+
                     // Camera Overlay Card
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -72,7 +113,7 @@ struct SettingsView: View {
                             Text("Camera Overlay")
                                 .font(.headline)
                         }
-                        
+
                         VStack(alignment: .leading, spacing: 16) {
                             HStack {
                                 Text("Overlay Opacity")
@@ -82,7 +123,7 @@ struct SettingsView: View {
                                     .foregroundStyle(Color.appAccent)
                                     .fontWeight(.semibold)
                             }
-                            
+
                             Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1) {
                                 Text("Opacity")
                             } minimumValueLabel: {
@@ -98,7 +139,7 @@ struct SettingsView: View {
                             .onChange(of: photoStore.overlayOpacity) { _, newValue in
                                 photoStore.setOverlayOpacity(newValue)
                             }
-                            
+
                             Text("Adjust how transparent the previous photo appears in the camera preview")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -113,7 +154,7 @@ struct SettingsView: View {
                             .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
                     )
                     .padding(.horizontal)
-                    
+
                     // About Card
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -123,42 +164,35 @@ struct SettingsView: View {
                             Text("About")
                                 .font(.headline)
                         }
-                        
+
                         VStack(alignment: .leading, spacing: 12) {
-                            // App Description
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("What is PocketPic?")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
-                                
-                                Text("PocketPic helps you create time-lapse videos from your selfies. Take consistent photos over time and export them as a beautiful montage video. Perfect for tracking changes, creating memories, or sharing your journey.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            
-                            Divider()
-                            
                             HStack {
-                                Text("Version")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Text("1.0.0")
-                                    .foregroundColor(.secondary)
-                                    .fontWeight(.medium)
-                            }
-                            
-                            Divider()
-                            
-                            HStack {
-                                Text("Total Photos")
+                                Text("Photos")
                                     .foregroundColor(.primary)
                                 Spacer()
                                 Text("\(photoStore.photos.count)")
                                     .foregroundStyle(Color.appAccent)
                                     .fontWeight(.semibold)
+                                    .font(.system(.body, design: .rounded))
                             }
+
+                            Divider()
+
+                            Button {
+                                // Replace with your App Store ID before submission
+                                if let url = URL(string: "itms-apps://itunes.apple.com/app/idYOUR_APP_ID?action=write-review") {
+                                    UIApplication.shared.open(url)
+                                }
+                            } label: {
+                                HStack {
+                                    Text("Rate PocketPic")
+                                        .foregroundColor(.primary)
+                                    Spacer()
+                                    Image(systemName: "star")
+                                        .foregroundStyle(Color.appAccent)
+                                }
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(.leading, 32)
                     }
@@ -169,7 +203,7 @@ struct SettingsView: View {
                             .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
                     )
                     .padding(.horizontal)
-                    
+
                     // Export Card
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -301,6 +335,47 @@ struct SettingsView: View {
                     )
                     .padding(.horizontal)
                     
+                    // Camera Card
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack {
+                            Image(systemName: "camera")
+                                .foregroundStyle(Color.appAccent)
+                                .font(.title3)
+                            Text("Camera")
+                                .font(.headline)
+                        }
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("Default Camera")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Picker("", selection: Binding(
+                                    get: { photoStore.defaultCameraPosition },
+                                    set: { photoStore.setDefaultCameraPosition($0) }
+                                )) {
+                                    Text("Front").tag("front")
+                                    Text("Back").tag("back")
+                                }
+                                .pickerStyle(.segmented)
+                                .frame(width: 140)
+                            }
+
+                            Text("Which camera opens when you start a session")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.leading, 32)
+                    }
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.systemBackground)
+                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
+                    )
+                    .padding(.horizontal)
+
                     // Camera Overlay Card
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
@@ -310,7 +385,7 @@ struct SettingsView: View {
                             Text("Camera Overlay")
                                 .font(.headline)
                         }
-                        
+
                         VStack(alignment: .leading, spacing: 16) {
                             HStack {
                                 Text("Overlay Opacity")
@@ -320,7 +395,7 @@ struct SettingsView: View {
                                     .foregroundStyle(Color.appAccent)
                                     .fontWeight(.semibold)
                             }
-                            
+
                             Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1) {
                                 Text("Opacity")
                             } minimumValueLabel: {
@@ -336,7 +411,7 @@ struct SettingsView: View {
                             .onChange(of: photoStore.overlayOpacity) { _, newValue in
                                 photoStore.setOverlayOpacity(newValue)
                             }
-                            
+
                             Text("Adjust how transparent the previous photo appears in the camera preview")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
@@ -351,7 +426,7 @@ struct SettingsView: View {
                             .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
                     )
                     .padding(.horizontal)
-                    
+
                     // Gallery privacy
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {

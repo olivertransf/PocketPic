@@ -16,27 +16,29 @@ import AppKit
 typealias PlatformImage = NSImage
 #endif
 
+// MARK: - Shared Colors
+
 extension Color {
-    static var appAccent: Color {
-        Color(red: 0.35, green: 0.45, blue: 0.78)
-    }
+    /// Primary tint used throughout the app.
+    static var appAccent: Color { Color(red: 0.45, green: 0.25, blue: 0.88) }
+
     static var systemBackground: Color {
         #if canImport(UIKit)
-        return Color(uiColor: .systemBackground)
+        Color(uiColor: .systemBackground)
         #elseif canImport(AppKit)
-        return Color(nsColor: .controlBackgroundColor)
+        Color(nsColor: .controlBackgroundColor)
         #else
-        return Color.clear
+        Color.clear
         #endif
     }
-    
+
     static var systemGroupedBackground: Color {
         #if canImport(UIKit)
-        return Color(uiColor: .systemGroupedBackground)
+        Color(uiColor: .systemGroupedBackground)
         #elseif canImport(AppKit)
-        return Color(nsColor: .windowBackgroundColor)
+        Color(nsColor: .windowBackgroundColor)
         #else
-        return Color.clear
+        Color.clear
         #endif
     }
 }

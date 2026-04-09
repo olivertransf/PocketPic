@@ -9,7 +9,9 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var photoStore = PhotoStore()
+    #if !os(macOS) && !targetEnvironment(macCatalyst)
     @State private var showCamera = false
+    #endif
     @State private var selectedTab = 0
     
     var body: some View {
@@ -21,18 +23,26 @@ struct ContentView: View {
                 .tag(0)
                 .environmentObject(photoStore)
             
-            // Camera placeholder view - will trigger camera on tap
-            CameraPlaceholderView()
-                .tabItem {
-                    Label("Camera", systemImage: "camera.fill")
-                }
-                .tag(1)
-                .onAppear {
-                    // Automatically open camera when tab is selected
-                    if selectedTab == 1 {
-                        showCamera = true
+            Group {
+                #if os(macOS) || targetEnvironment(macCatalyst)
+                CameraView(onDismiss: {
+                    selectedTab = 0
+                })
+                .environmentObject(photoStore)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                #else
+                CameraPlaceholderView()
+                    .onAppear {
+                        if selectedTab == 1 {
+                            showCamera = true
+                        }
                     }
-                }
+                #endif
+            }
+            .tabItem {
+                Label("Camera", systemImage: "camera.fill")
+            }
+            .tag(1)
             
             SettingsView()
                 .tabItem {
@@ -42,28 +52,26 @@ struct ContentView: View {
                 .environmentObject(photoStore)
         }
         .preferredColorScheme(nil)
+        #if !os(macOS) && !targetEnvironment(macCatalyst)
         .onChange(of: selectedTab) { oldValue, newValue in
             if newValue == 1 && oldValue != 1 {
-                // Only show camera if we're switching TO the camera tab
                 showCamera = true
             }
         }
-        #if os(macOS)
-        .tabViewStyle(.sidebarAdaptable)
         #endif
-        #if canImport(UIKit)
+        #if canImport(UIKit) && !os(macOS) && !targetEnvironment(macCatalyst)
         .fullScreenCover(isPresented: $showCamera) {
             CameraView(onDismiss: {
                 showCamera = false
-                selectedTab = 0 // Return to gallery tab
+                selectedTab = 0
             })
             .environmentObject(photoStore)
         }
-        #elseif canImport(AppKit)
+        #elseif canImport(AppKit) && !os(macOS) && !targetEnvironment(macCatalyst)
         .sheet(isPresented: $showCamera) {
             CameraView(onDismiss: {
                 showCamera = false
-                selectedTab = 0 // Return to gallery tab
+                selectedTab = 0
             })
             .environmentObject(photoStore)
             .frame(minWidth: 800, minHeight: 600)
@@ -74,33 +82,21 @@ struct ContentView: View {
 
 struct CameraPlaceholderView: View {
     var body: some View {
-        ZStack {
-            Color.systemGroupedBackground
-                .ignoresSafeArea()
-            VStack(spacing: 28) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color.appAccent.opacity(0.12))
-                        .frame(width: 104, height: 104)
-                    Image(systemName: "camera.aperture")
-                        .font(.system(size: 44, weight: .medium))
-                        .foregroundStyle(Color.appAccent)
-                        .symbolRenderingMode(.hierarchical)
-                }
-                VStack(spacing: 10) {
-                    Text("Capture")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    Text("Open this tab to use the camera. Your last gallery photo can appear as a faint overlay for consistent framing.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 380)
-                }
+        VStack(spacing: 20) {
+            Image(systemName: "camera.aperture")
+                .font(.system(size: 52, weight: .thin))
+                .foregroundStyle(Color.appAccent)
+
+            VStack(spacing: 6) {
+                Text("Open the Camera tab to capture a photo.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
-            .padding(36)
         }
+        .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.systemGroupedBackground.ignoresSafeArea())
     }
 }
 

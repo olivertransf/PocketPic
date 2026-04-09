@@ -53,6 +53,7 @@ struct CameraView: View {
         .onAppear {
             UIDevice.current.beginGeneratingDeviceOrientationNotifications()
             orientation = UIDevice.current.orientation
+            cameraController.preferredPosition = photoStore.defaultCameraPosition == "back" ? .back : .front
             cameraController.startSession()
         }
         .onDisappear {
@@ -110,7 +111,10 @@ class CameraController: NSObject, ObservableObject {
     private var isConfiguring = false
     private let configQueue = DispatchQueue(label: "CameraControllerConfigQueue")
     var deviceInput: AVCaptureDeviceInput?
-    
+
+    /// The camera position to select on first launch / camera discovery.
+    var preferredPosition: AVCaptureDevice.Position = .front
+
     @Published var availableCameras: [AVCaptureDevice] = []
     @Published var currentCamera: AVCaptureDevice?
     
@@ -263,7 +267,8 @@ class CameraController: NSObject, ObservableObject {
             let firstCamera = discoveredCameras.first
             
             if self.currentCamera == nil || !(discoveredCameras.contains { $0.uniqueID == self.currentCamera?.uniqueID }) {
-                self.currentCamera = firstCamera
+                let preferred = discoveredCameras.first(where: { $0.position == self.preferredPosition })
+                self.currentCamera = preferred ?? firstCamera
                 print("Selected camera: \(self.currentCamera?.localizedName ?? "none")")
             }
             
@@ -353,19 +358,19 @@ class CameraController: NSObject, ObservableObject {
         }
     }
     
-    func switchCamera(to device: AVCaptureDevice) {
+    func switchCamera(to device: AVCaptureDevice, completion: (() -> Void)? = nil) {
         if let current = currentCamera, current.uniqueID == device.uniqueID { return }
         guard availableCameras.contains(where: { $0.uniqueID == device.uniqueID }) else { return }
         configQueue.async { [weak self] in
             guard let self = self else { return }
-            
+
             self.isConfiguring = true
             self.captureSession.beginConfiguration()
-            
+
             if let existingInput = self.deviceInput {
                 self.captureSession.removeInput(existingInput)
             }
-            
+
             do {
                 try device.lockForConfiguration()
                 if device.isFocusModeSupported(.continuousAutoFocus) {
@@ -377,23 +382,25 @@ class CameraController: NSObject, ObservableObject {
                 if device.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) {
                     device.whiteBalanceMode = .continuousAutoWhiteBalance
                 }
-                
+
                 let input = try AVCaptureDeviceInput(device: device)
                 if self.captureSession.canAddInput(input) {
                     self.captureSession.addInput(input)
                     self.deviceInput = input
-                    DispatchQueue.main.async {
-                        self.currentCamera = device
-                    }
                 }
-                
+
                 device.unlockForConfiguration()
             } catch {
                 print("Error switching camera: \(error)")
             }
-            
+
             self.captureSession.commitConfiguration()
             self.isConfiguring = false
+
+            DispatchQueue.main.async {
+                self.currentCamera = device
+                completion?()
+            }
         }
     }
     
@@ -435,6 +442,14 @@ class CameraController: NSObject, ObservableObject {
             }
         }
     }
+
+    #if canImport(UIKit)
+    func updatePhotoOutputOrientation(_ orientation: AVCaptureVideoOrientation) {
+        guard let connection = photoOutput.connection(with: .video),
+              connection.isVideoOrientationSupported else { return }
+        connection.videoOrientation = orientation
+    }
+    #endif
     
     // WARNING: Must not call captureSession.startRunning inside begin/commit!
     private func setupCameraSync() {
@@ -712,6 +727,8 @@ class CameraContainerView: UIView {
     // Rotation coordinator (iOS 17+) — stored as Any to avoid @available on properties
     private var _rotationCoordinator: Any?
     private var _rotationObservation: Any?
+    // Observes AVCaptureSession running state to set up orientation after session is ready
+    private var sessionRunningObserver: NSObjectProtocol?
     
     var onDismiss: (() -> Void)?
     var onCapture: (() -> Void)?
@@ -749,12 +766,6 @@ class CameraContainerView: UIView {
         }
     }
     
-    private var isLandscape: Bool {
-        let orientation = UIDevice.current.orientation
-        return orientation == .landscapeLeft || orientation == .landscapeRight ||
-               (orientation == .unknown && bounds.width > bounds.height)
-    }
-    
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupUI()
@@ -767,8 +778,11 @@ class CameraContainerView: UIView {
     
     deinit {
         NotificationCenter.default.removeObserver(self)
+        if let obs = sessionRunningObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
     }
-    
+
     private func setupOrientationObserver() {
         NotificationCenter.default.addObserver(
             self,
@@ -783,6 +797,9 @@ class CameraContainerView: UIView {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             self.updateFrame()
+            if #unavailable(iOS 17.0) {
+                self.applyLegacyOrientation()
+            }
             self.setNeedsLayout()
             self.layoutIfNeeded()
         }
@@ -792,14 +809,40 @@ class CameraContainerView: UIView {
     
     func setupCamera(cameraController: CameraController) {
         self.cameraController = cameraController
+
+        // Remove old session observer before attaching new one
+        if let old = sessionRunningObserver {
+            NotificationCenter.default.removeObserver(old)
+        }
+
         let layer = AVCaptureVideoPreviewLayer(session: cameraController.captureSession)
-        layer.videoGravity = .resizeAspect
+        layer.videoGravity = .resizeAspectFill
         self.layer.insertSublayer(layer, at: 0)
         self.previewLayer = layer
+
+        // When the session starts running we know the connection is live — safe
+        // to set up the rotation coordinator and apply initial orientation.
+        sessionRunningObserver = NotificationCenter.default.addObserver(
+            forName: .AVCaptureSessionDidStartRunning,
+            object: cameraController.captureSession,
+            queue: .main
+        ) { [weak self] _ in
+            self?.onSessionStartedRunning()
+        }
+
         DispatchQueue.main.async { [weak self] in
             self?.updateFrame()
-            self?.setupCameraOrientation()
             self?.previewLayer?.isHidden = false
+        }
+    }
+
+    /// Called on main thread once the capture session is actually running.
+    private func onSessionStartedRunning() {
+        setupCameraOrientation()
+        if #available(iOS 17.0, *) {
+            // RotationCoordinator handles it via KVO
+        } else {
+            applyLegacyOrientation()
         }
     }
 
@@ -834,89 +877,122 @@ class CameraContainerView: UIView {
         previewLayer?.connection?.videoRotationAngle = coordinator.videoRotationAngleForHorizonLevelPreview
         cameraController?.updatePhotoOutputRotationAngle(coordinator.videoRotationAngleForHorizonLevelCapture)
     }
+
+    private func applyLegacyOrientation() {
+        guard #unavailable(iOS 17.0) else { return }
+        let deviceOrientation = UIDevice.current.orientation
+        let videoOrientation: AVCaptureVideoOrientation
+        switch deviceOrientation {
+        case .landscapeLeft:        videoOrientation = .landscapeRight
+        case .landscapeRight:       videoOrientation = .landscapeLeft
+        case .portraitUpsideDown:   videoOrientation = .portraitUpsideDown
+        default:                    videoOrientation = .portrait
+        }
+        previewLayer?.connection?.videoOrientation = videoOrientation
+        cameraController?.updatePhotoOutputOrientation(videoOrientation)
+    }
     
     
     private func setupUI() {
         backgroundColor = .black
         
         overlayImageView = UIImageView()
-        overlayImageView.contentMode = .scaleAspectFit
+        overlayImageView.contentMode = .scaleAspectFill
+        overlayImageView.clipsToBounds = true
         overlayImageView.alpha = 0.4
         overlayImageView.isHidden = true
         overlayImageView.isUserInteractionEnabled = false
         addSubview(overlayImageView)
-        
+
         imageView = UIImageView()
-        imageView.contentMode = .scaleAspectFit
+        imageView.contentMode = .scaleAspectFill
+        imageView.clipsToBounds = true
         imageView.backgroundColor = .black
         imageView.isHidden = true
         addSubview(imageView)
         
+        // Close button — glass circle with xmark
         closeButton = UIButton(type: .system)
-        closeButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+        let xmarkConfig = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        closeButton.setImage(UIImage(systemName: "xmark", withConfiguration: xmarkConfig), for: .normal)
         closeButton.tintColor = .white
-        closeButton.contentVerticalAlignment = .fill
-        closeButton.contentHorizontalAlignment = .fill
+        closeButton.backgroundColor = UIColor(white: 0.12, alpha: 0.72)
+        closeButton.layer.cornerRadius = 22
+        closeButton.layer.cornerCurve = .continuous
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        if #available(iOS 15.0, *) {
-            var config = UIButton.Configuration.plain()
-            config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
-            closeButton.configuration = config
-        } else {
-            closeButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
-        }
         addSubview(closeButton)
         
+        // Overlay toggle — glass pill button
         overlayToggleButton = UIButton(type: .system)
-        let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium)
-        overlayToggleButton.setImage(UIImage(systemName: "person.crop.rectangle.stack", withConfiguration: config), for: .normal)
-        overlayToggleButton.setImage(UIImage(systemName: "person.crop.rectangle.stack.fill", withConfiguration: config), for: .selected)
+        let symbolConfig = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+        overlayToggleButton.setImage(UIImage(systemName: "person.crop.rectangle.stack", withConfiguration: symbolConfig), for: .normal)
+        overlayToggleButton.setImage(UIImage(systemName: "person.crop.rectangle.stack.fill", withConfiguration: symbolConfig), for: .selected)
         overlayToggleButton.tintColor = .white
-        overlayToggleButton.backgroundColor = UIColor.black.withAlphaComponent(0.5)
-        overlayToggleButton.layer.cornerRadius = 8
+        overlayToggleButton.backgroundColor = UIColor(white: 0.12, alpha: 0.72)
+        overlayToggleButton.layer.cornerRadius = 27
+        overlayToggleButton.layer.cornerCurve = .continuous
         overlayToggleButton.addTarget(self, action: #selector(overlayToggleTapped), for: .touchUpInside)
+        if #available(iOS 15.0, *) {
+            var cfg = UIButton.Configuration.plain()
+            cfg.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14)
+            overlayToggleButton.configuration = cfg
+        }
         addSubview(overlayToggleButton)
-        
+
+        // Camera flip — glass circle button
         cameraSwitchButton = UIButton(type: .system)
-        let cameraConfig = UIImage.SymbolConfiguration(pointSize: 24, weight: .medium)
-        cameraSwitchButton.setImage(UIImage(systemName: "camera.rotate", withConfiguration: cameraConfig), for: .normal)
+        let camSymbolConfig = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+        cameraSwitchButton.setImage(UIImage(systemName: "camera.rotate", withConfiguration: camSymbolConfig), for: .normal)
         cameraSwitchButton.tintColor = .white
-        cameraSwitchButton.backgroundColor = UIColor.black.withAlphaComponent(0.5)
-        cameraSwitchButton.layer.cornerRadius = 8
+        cameraSwitchButton.backgroundColor = UIColor(white: 0.12, alpha: 0.72)
+        cameraSwitchButton.layer.cornerRadius = 27
+        cameraSwitchButton.layer.cornerCurve = .continuous
         cameraSwitchButton.addTarget(self, action: #selector(cameraSwitchTapped), for: .touchUpInside)
+        if #available(iOS 15.0, *) {
+            var cfg = UIButton.Configuration.plain()
+            cfg.contentInsets = NSDirectionalEdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14)
+            cameraSwitchButton.configuration = cfg
+        }
         addSubview(cameraSwitchButton)
-        
+
+        // Shutter button — classic iOS concentric-circle style
         captureButton = UIButton(type: .custom)
-        captureButton.backgroundColor = .white
-        captureButton.layer.cornerRadius = 35
-        captureButton.layer.borderWidth = 5
-        captureButton.layer.borderColor = UIColor.white.withAlphaComponent(0.5).cgColor
+        captureButton.backgroundColor = .clear
+        captureButton.layer.cornerRadius = 41
+        captureButton.layer.borderWidth = 4
+        captureButton.layer.borderColor = UIColor.white.cgColor
+        // Inner white fill sublayer
+        let shutterInner = CALayer()
+        shutterInner.backgroundColor = UIColor.white.cgColor
+        shutterInner.cornerRadius = 33
+        shutterInner.frame = CGRect(x: 8, y: 8, width: 66, height: 66)
+        captureButton.layer.insertSublayer(shutterInner, at: 0)
         captureButton.addTarget(self, action: #selector(captureTapped), for: .touchUpInside)
         addSubview(captureButton)
-        
+
+        // Retake — glass dark pill
         retakeButton = UIButton(type: .system)
         retakeButton.setTitle("Retake", for: .normal)
-        retakeButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        retakeButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
         retakeButton.setTitleColor(.white, for: .normal)
-        retakeButton.backgroundColor = UIColor.systemGray.withAlphaComponent(0.9)
-        retakeButton.layer.cornerRadius = 12
-        retakeButton.layer.shadowColor = UIColor.black.cgColor
-        retakeButton.layer.shadowOpacity = 0.2
-        retakeButton.layer.shadowOffset = CGSize(width: 0, height: 2)
-        retakeButton.layer.shadowRadius = 4
+        retakeButton.backgroundColor = UIColor(white: 0.14, alpha: 0.80)
+        retakeButton.layer.cornerRadius = 14
+        retakeButton.layer.cornerCurve = .continuous
         retakeButton.addTarget(self, action: #selector(retakeTapped), for: .touchUpInside)
         addSubview(retakeButton)
-        
+
+        // Use Photo — accent-colored pill
         saveButton = UIButton(type: .system)
         saveButton.setTitle("Use Photo", for: .normal)
-        saveButton.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        saveButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
         saveButton.setTitleColor(.white, for: .normal)
-        saveButton.backgroundColor = UIColor.systemBlue
-        saveButton.layer.cornerRadius = 12
-        saveButton.layer.shadowColor = UIColor.systemBlue.cgColor
-        saveButton.layer.shadowOpacity = 0.4
+        saveButton.backgroundColor = UIColor(red: 0.45, green: 0.25, blue: 0.88, alpha: 1)
+        saveButton.layer.cornerRadius = 14
+        saveButton.layer.cornerCurve = .continuous
+        saveButton.layer.shadowColor = UIColor(red: 0.45, green: 0.25, blue: 0.88, alpha: 1).cgColor
+        saveButton.layer.shadowOpacity = 0.45
         saveButton.layer.shadowOffset = CGSize(width: 0, height: 4)
-        saveButton.layer.shadowRadius = 8
+        saveButton.layer.shadowRadius = 10
         saveButton.addTarget(self, action: #selector(saveTapped), for: .touchUpInside)
         addSubview(saveButton)
         
@@ -930,117 +1006,71 @@ class CameraContainerView: UIView {
     }
     
     
-    private func getCameraAspectRatio() -> CGFloat {
-        guard let cameraController = cameraController,
-              let device = cameraController.deviceInput?.device else {
-            if isLandscape { return 16.0 / 9.0 }
-            else { return 9.0 / 16.0 }
-        }
-        
-        let activeFormat = device.activeFormat
-        let formatDescription = activeFormat.formatDescription
-        let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
-        
-        if isLandscape {
-            let sensorAspectRatio = CGFloat(dimensions.width) / CGFloat(dimensions.height)
-            return sensorAspectRatio
-        } else {
-            let sensorAspectRatio = CGFloat(dimensions.height) / CGFloat(dimensions.width)
-            return sensorAspectRatio
-        }
-    }
-    
     private func updateFrame() {
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in self?.updateFrame() }
             return
         }
-        let previewFrame: CGRect
-        
-        if isLandscape {
-            let cameraAspectRatio = getCameraAspectRatio()
-            let previewHeight = bounds.height
-            let previewWidth = previewHeight * cameraAspectRatio
-            let previewX = (bounds.width - previewWidth) / 2
-            previewFrame = CGRect(x: previewX, y: 0, width: previewWidth, height: previewHeight)
-        } else {
-            let cameraAspectRatio = getCameraAspectRatio()
-            let previewWidth = bounds.width
-            let previewHeight = previewWidth / cameraAspectRatio
-            let previewY = (bounds.height - previewHeight) / 2
-            previewFrame = CGRect(x: 0, y: previewY, width: previewWidth, height: previewHeight)
-        }
-        
-        previewLayer?.frame = previewFrame
-        previewLayer?.cornerRadius = 0
-        previewLayer?.masksToBounds = true
-        
-        imageView.frame = previewFrame
-        imageView.layer.cornerRadius = 0
-        imageView.clipsToBounds = true
-        
-        overlayImageView.frame = previewFrame
-        overlayImageView.layer.cornerRadius = 0
-        overlayImageView.clipsToBounds = true
+        previewLayer?.frame = bounds
+        imageView.frame = bounds
+        overlayImageView.frame = bounds
     }
     
     private func updateButtonPositions() {
         let safeInsets = safeAreaInsets
-        let buttonSize: CGFloat = 54
-        let captureButtonSize: CGFloat = 70
-        let margin: CGFloat = 20
-        
+        let sideButtonSize: CGFloat = 54   // overlay toggle & camera flip
+        let shutterSize: CGFloat = 82      // outer ring diameter
+        let closeSize: CGFloat = 44
+        let margin: CGFloat = 28
+
         let isLandscape = bounds.width > bounds.height
-        let closeX = safeInsets.left + margin
-        let closeY = safeInsets.top + margin
-        closeButton.frame = CGRect(x: closeX, y: closeY, width: buttonSize, height: buttonSize)
-        
+
+        // Close button — top-leading
+        closeButton.frame = CGRect(
+            x: safeInsets.left + margin,
+            y: safeInsets.top + margin,
+            width: closeSize,
+            height: closeSize
+        )
+
         if !showCapturedImage {
             if isLandscape {
-                let captureX = bounds.width - safeInsets.right - margin - captureButtonSize
-                captureButton.frame = CGRect(
-                    x: captureX,
-                    y: (bounds.height - captureButtonSize) / 2,
-                    width: captureButtonSize,
-                    height: captureButtonSize
-                )
-                let toggleSpacing: CGFloat = 20
-                let toggleY = captureButton.frame.minY - buttonSize - toggleSpacing
-                overlayToggleButton.frame = CGRect(
-                    x: captureX + (captureButtonSize - buttonSize) / 2,
-                    y: toggleY,
-                    width: buttonSize,
-                    height: buttonSize
-                )
-                let cameraSwitchY = toggleY - buttonSize - toggleSpacing
+                // Right column: camera-flip, overlay-toggle, shutter (top → bottom)
+                let col = bounds.width - safeInsets.right - margin - shutterSize
+                let centerY = bounds.height / 2
+
                 cameraSwitchButton.frame = CGRect(
-                    x: captureX + (captureButtonSize - buttonSize) / 2,
-                    y: cameraSwitchY,
-                    width: buttonSize,
-                    height: buttonSize
+                    x: col + (shutterSize - sideButtonSize) / 2,
+                    y: centerY - shutterSize / 2 - 20 - sideButtonSize,
+                    width: sideButtonSize, height: sideButtonSize
+                )
+                overlayToggleButton.frame = CGRect(
+                    x: col + (shutterSize - sideButtonSize) / 2,
+                    y: centerY - sideButtonSize / 2,
+                    width: sideButtonSize, height: sideButtonSize
+                )
+                captureButton.frame = CGRect(
+                    x: col,
+                    y: centerY + 20 + sideButtonSize / 2,
+                    width: shutterSize, height: shutterSize
                 )
             } else {
-                let captureY = bounds.height - safeInsets.bottom - margin - captureButtonSize
-                captureButton.frame = CGRect(
-                    x: (bounds.width - captureButtonSize) / 2,
-                    y: captureY,
-                    width: captureButtonSize,
-                    height: captureButtonSize
-                )
-                let toggleSpacing: CGFloat = 30
-                let toggleX = captureButton.frame.minX - buttonSize - toggleSpacing
+                // Bottom row: overlay-toggle | shutter | camera-flip
+                let bottomY = bounds.height - safeInsets.bottom - margin - shutterSize
+                let cx = (bounds.width - shutterSize) / 2
+
+                captureButton.frame = CGRect(x: cx, y: bottomY, width: shutterSize, height: shutterSize)
+
+                let sideY = bottomY + (shutterSize - sideButtonSize) / 2
                 overlayToggleButton.frame = CGRect(
-                    x: toggleX,
-                    y: captureY + (captureButtonSize - buttonSize) / 2,
-                    width: buttonSize,
-                    height: buttonSize
+                    x: cx - 44 - sideButtonSize,
+                    y: sideY,
+                    width: sideButtonSize, height: sideButtonSize
                 )
-                let cameraSwitchX = captureButton.frame.maxX + toggleSpacing
                 cameraSwitchButton.frame = CGRect(
-                    x: cameraSwitchX,
-                    y: captureY + (captureButtonSize - buttonSize) / 2,
-                    width: buttonSize,
-                    height: buttonSize
+                    x: cx + shutterSize + 44,
+                    y: sideY,
+                    width: sideButtonSize, height: sideButtonSize
                 )
             }
             captureButton.isHidden = false
@@ -1050,22 +1080,21 @@ class CameraContainerView: UIView {
             retakeButton.isHidden = true
             saveButton.isHidden = true
         } else {
-            let buttonHeight: CGFloat = 50
-            let buttonWidth: CGFloat = 120
-            let spacing: CGFloat = 20
-            
+            let buttonHeight: CGFloat = 52
+            let buttonWidth: CGFloat = 130
+            let spacing: CGFloat = 16
+
             if isLandscape {
-                let buttonsX = bounds.width - safeInsets.right - margin - buttonWidth
-                let totalHeight = (buttonHeight * 2) + spacing
-                let startY = (bounds.height - totalHeight) / 2
-                retakeButton.frame = CGRect(x: buttonsX, y: startY, width: buttonWidth, height: buttonHeight)
-                saveButton.frame = CGRect(x: buttonsX, y: startY + buttonHeight + spacing, width: buttonWidth, height: buttonHeight)
+                let col = bounds.width - safeInsets.right - margin - buttonWidth
+                let startY = (bounds.height - buttonHeight * 2 - spacing) / 2
+                retakeButton.frame = CGRect(x: col, y: startY, width: buttonWidth, height: buttonHeight)
+                saveButton.frame = CGRect(x: col, y: startY + buttonHeight + spacing, width: buttonWidth, height: buttonHeight)
             } else {
-                let totalWidth = (buttonWidth * 2) + spacing
-                let startX = (bounds.width - totalWidth) / 2
-                let buttonY = bounds.height - safeInsets.bottom - margin - buttonHeight
-                retakeButton.frame = CGRect(x: startX, y: buttonY, width: buttonWidth, height: buttonHeight)
-                saveButton.frame = CGRect(x: startX + buttonWidth + spacing, y: buttonY, width: buttonWidth, height: buttonHeight)
+                let totalW = buttonWidth * 2 + spacing
+                let startX = (bounds.width - totalW) / 2
+                let bY = bounds.height - safeInsets.bottom - margin - buttonHeight
+                retakeButton.frame = CGRect(x: startX, y: bY, width: buttonWidth, height: buttonHeight)
+                saveButton.frame = CGRect(x: startX + buttonWidth + spacing, y: bY, width: buttonWidth, height: buttonHeight)
             }
             retakeButton.isHidden = false
             saveButton.isHidden = false
@@ -1093,15 +1122,27 @@ class CameraContainerView: UIView {
             }
         }
     }
-    
+
     @objc private func closeTapped() {
         onDismiss?()
     }
-    
+
     @objc private func captureTapped() {
+        // Classic spring press feel
+        UIView.animate(withDuration: 0.08, delay: 0, options: .curveEaseIn) {
+            self.captureButton.transform = CGAffineTransform(scaleX: 0.88, y: 0.88)
+        } completion: { _ in
+            UIView.animate(
+                withDuration: 0.28, delay: 0,
+                usingSpringWithDamping: 0.52,
+                initialSpringVelocity: 0.6
+            ) {
+                self.captureButton.transform = .identity
+            }
+        }
         onCapture?()
     }
-    
+
     @objc private func overlayToggleTapped() {
         onToggleOverlay?()
     }
@@ -1112,10 +1153,14 @@ class CameraContainerView: UIView {
         guard cameras.count > 1, let current = cameraController.currentCamera else { return }
         let currentIndex = cameras.firstIndex(where: { $0.uniqueID == current.uniqueID }) ?? 0
         let nextIndex = (currentIndex + 1) % cameras.count
-        cameraController.switchCamera(to: cameras[nextIndex])
-        // Wait for the switch to commit then refresh orientation for the new device
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+        cameraController.switchCamera(to: cameras[nextIndex]) { [weak self] in
+            // Camera switch has committed — safe to re-bind the rotation coordinator
             self?.setupCameraOrientation()
+            if #available(iOS 17.0, *) {
+                // RotationCoordinator KVO takes over
+            } else {
+                self?.applyLegacyOrientation()
+            }
         }
     }
 
@@ -1242,7 +1287,7 @@ class CameraContainerView: NSView {
         imageView.isHidden = true
         addSubview(imageView)
         
-        closeButton = makeIconButton(symbol: "xmark.circle.fill", size: 22)
+        closeButton = makeIconButton(symbol: "xmark.circle.fill", size: 28)
         closeButton.action = #selector(closeTapped)
         addSubview(closeButton)
         
@@ -1327,8 +1372,18 @@ class CameraContainerView: NSView {
         let buttonSize: CGFloat = 54
         let captureButtonSize: CGFloat = 70
         let margin: CGFloat = 20
-        
-        closeButton.frame = CGRect(x: margin, y: bounds.height - margin - buttonSize, width: buttonSize, height: buttonSize)
+        let closeSize: CGFloat = 68
+        let topSafe: CGFloat
+        if #available(macOS 11.0, *) {
+            let r = safeAreaInsets.top
+            topSafe = r > 0 ? r : 40
+        } else {
+            topSafe = 40
+        }
+        // NSView origin is bottom-left; place close below the window/tab chrome (was high y, under top tab bar).
+        let closeBottomY = max(margin, bounds.height - topSafe - margin - closeSize)
+        closeButton.layer?.cornerRadius = 14
+        closeButton.frame = CGRect(x: margin, y: closeBottomY, width: closeSize, height: closeSize)
         
         if !showCapturedImage {
             let captureY = margin

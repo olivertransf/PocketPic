@@ -30,10 +30,14 @@ struct GalleryView: View {
     @State private var showExportSheet = false
     @State private var pendingShareSheet = false
     @State private var showEyeDetectionPhoto: Photo?
+    @State private var detailPhoto: Photo?
+    @State private var deleteTargetPhoto: Photo?
+    @State private var showSingleDeleteConfirmation = false
     
-    private let columns = [
-        GridItem(.adaptive(minimum: 120, maximum: 200), spacing: 12)
-    ]
+    /// Column count grows with window width; cell size stays between ~96–168 pt.
+    private var galleryColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 96, maximum: 168), spacing: 3)]
+    }
     
     private var groupedBackgroundColor: Color {
         #if canImport(UIKit)
@@ -63,71 +67,80 @@ struct GalleryView: View {
                     .ignoresSafeArea()
                 
                 if photoStore.photos.isEmpty {
-                    // Modern empty state
-                    VStack(spacing: 24) {
-                        ZStack {
-                            Circle()
-                                .fill(Color.appAccent.opacity(0.12))
-                                .frame(width: 120, height: 120)
-                            
-                            Image(systemName: "photo.on.rectangle")
-                                .font(.system(size: 50))
-                                .foregroundStyle(Color.appAccent)
-                        }
-                        
-                        VStack(spacing: 8) {
+                    VStack(spacing: 20) {
+                        Image(systemName: "person.crop.rectangle.stack")
+                            .font(.system(size: 48, weight: .thin))
+                            .foregroundStyle(Color.appAccent)
+
+                        VStack(spacing: 6) {
                             Text("No Photos Yet")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                            
-                            Text("Take your first selfie to get started")
+                                .font(.headline)
+
+                            Text("Open the Camera tab to take your first photo.")
                                 .font(.subheadline)
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)
                         }
                     }
-                    .transition(.opacity.combined(with: .scale))
+                    .padding(.top, 80)
+                    .padding(.horizontal, 40)
+                    .transition(.opacity)
                 } else {
                     ScrollView {
-                        LazyVGrid(columns: columns, spacing: 10) {
+                        LazyVGrid(columns: galleryColumns, spacing: 3) {
                             ForEach(sortedPhotos) { photo in
-                                PhotoThumbnailCard(photo: photo, isSelected: selectedPhotos.contains(photo.id), isSelectionMode: isSelectionMode)
-                                    .onTapGesture {
-                                        if isSelectionMode {
-                                            withAnimation(.spring(response: 0.3)) {
-                                                toggleSelection(photo: photo)
-                                            }
+                                PhotoThumbnailCard(
+                                    photo: photo,
+                                    isSelected: selectedPhotos.contains(photo.id),
+                                    isSelectionMode: isSelectionMode
+                                )
+                                .onTapGesture {
+                                    if isSelectionMode {
+                                        withAnimation(.spring(response: 0.3)) {
+                                            toggleSelection(photo: photo)
+                                        }
+                                    } else {
+                                        detailPhoto = photo
+                                    }
+                                }
+                                .onLongPressGesture(minimumDuration: 0.4) {
+                                    if !isSelectionMode {
+                                        deleteTargetPhoto = photo
+                                        showSingleDeleteConfirmation = true
+                                    }
+                                }
+                                .contextMenu {
+                                    if !isSelectionMode {
+                                        Button {
+                                            detailPhoto = photo
+                                        } label: {
+                                            Label("View Photo", systemImage: "photo")
+                                        }
+                                        Button {
+                                            showEyeDetectionPhoto = photo
+                                        } label: {
+                                            Label("Detect Eye Positions", systemImage: "eye")
+                                        }
+                                        .disabled(!photoStore.canLoadImage(for: photo))
+                                        Divider()
+                                        Button(role: .destructive) {
+                                            deleteTargetPhoto = photo
+                                            showSingleDeleteConfirmation = true
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
                                         }
                                     }
-                                    .contextMenu {
-                                        if !isSelectionMode {
-                                            Button {
-                                                showEyeDetectionPhoto = photo
-                                            } label: {
-                                                Label("Detect Eye Positions", systemImage: "eye")
-                                                    .font(.body)
-                                            }
-                                            .disabled(!photoStore.canLoadImage(for: photo))
-                                            Button(role: .destructive) {
-                                                withAnimation(.spring()) {
-                                                    photoStore.deletePhoto(photo)
-                                                }
-                                            } label: {
-                                                Label("Delete", systemImage: "trash")
-                                                    .font(.body)
-                                            }
-                                        }
-                                    }
+                                }
                             }
                         }
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 1)
                     }
                 }
             }
             .navigationTitle(isSelectionMode ? "\(selectedPhotos.count) Selected" : "Gallery")
             #if canImport(UIKit)
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 #if canImport(UIKit)
@@ -316,11 +329,33 @@ struct GalleryView: View {
             .sheet(item: $showEyeDetectionPhoto) { photo in
                 EyeDetectionSheet(photo: photo, photoStore: photoStore)
             }
+            .sheet(item: $detailPhoto) { photo in
+                PhotoDetailView(photo: photo)
+                    .environmentObject(photoStore)
+            }
             #else
             .fullScreenCover(item: $showEyeDetectionPhoto) { photo in
                 EyeDetectionSheet(photo: photo, photoStore: photoStore)
             }
+            .fullScreenCover(item: $detailPhoto) { photo in
+                PhotoDetailView(photo: photo)
+                    .environmentObject(photoStore)
+            }
             #endif
+            .confirmationDialog(
+                "Delete Photo",
+                isPresented: $showSingleDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    if let photo = deleteTargetPhoto {
+                        photoStore.deletePhoto(photo)
+                        deleteTargetPhoto = nil
+                    }
+                }
+            } message: {
+                Text("This will permanently remove the photo from your library.")
+            }
         }
     }
     
@@ -365,18 +400,14 @@ struct PhotoThumbnailCard: View {
             let side = geometry.size.width
             ZStack {
                 if photoStore.hidePhotosInGallery {
-                    RoundedRectangle(cornerRadius: 10)
+                    Rectangle()
                         .fill(Color.secondary.opacity(0.1))
                         .frame(width: side, height: side)
                         .overlay {
                             Image(systemName: "photo")
-                                .font(.system(size: 28, weight: .light))
+                                .font(.system(size: 26, weight: .light))
                                 .foregroundStyle(.tertiary)
                         }
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(isSelected && isSelectionMode ? Color.appAccent : Color.clear, lineWidth: 2.5)
-                        )
                 } else if let image = thumbnail {
                     #if canImport(UIKit)
                     Image(uiImage: image)
@@ -384,69 +415,87 @@ struct PhotoThumbnailCard: View {
                         .scaledToFill()
                         .frame(width: side, height: side)
                         .clipped()
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(isSelected && isSelectionMode ? Color.appAccent : Color.clear, lineWidth: 2.5)
-                        )
                     #elseif canImport(AppKit)
                     Image(nsImage: image)
                         .resizable()
                         .scaledToFill()
                         .frame(width: side, height: side)
                         .clipped()
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(isSelected && isSelectionMode ? Color.appAccent : Color.clear, lineWidth: 2.5)
-                        )
                     #endif
                 } else {
-                    RoundedRectangle(cornerRadius: 10)
+                    Rectangle()
                         .fill(Color.secondary.opacity(0.08))
                         .frame(width: side, height: side)
-                        .overlay(
-                            ProgressView()
-                                .controlSize(.small)
-                        )
+                        .overlay(ProgressView().controlSize(.small))
                 }
 
+                // Date badge — bottom leading
+                if !photoStore.hidePhotosInGallery {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Text(photo.date, format: .dateTime.month(.abbreviated).day())
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 3)
+                                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 5))
+                                .padding(6)
+                            Spacer()
+                        }
+                    }
+                }
+
+                // Selection overlay
                 if isSelectionMode {
+                    // Dim unselected
+                    Color.black.opacity(isSelected ? 0 : 0.25)
+
                     VStack {
                         HStack {
                             Spacer()
                             ZStack {
                                 Circle()
-                                    .fill(isSelected ? Color.appAccent : Color.white.opacity(0.9))
-                                    .frame(width: 26, height: 26)
-                                    .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
-
+                                    .fill(isSelected ? Color.appAccent : Color.white.opacity(0.85))
+                                    .frame(width: 24, height: 24)
+                                    .shadow(color: .black.opacity(0.15), radius: 2)
                                 if isSelected {
                                     Image(systemName: "checkmark")
                                         .foregroundColor(.white)
-                                        .font(.system(size: 13, weight: .bold))
+                                        .font(.system(size: 12, weight: .bold))
                                         .transition(.scale.combined(with: .opacity))
                                 }
                             }
-                            .padding(8)
+                            .padding(7)
                         }
                         Spacer()
                     }
                 }
+
+                // Selected highlight border
+                if isSelected && isSelectionMode {
+                    Rectangle()
+                        .stroke(Color.appAccent, lineWidth: 3)
+                }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .shadow(color: .black.opacity(0.06), radius: 3, x: 0, y: 1)
-            .scaleEffect(isSelected && isSelectionMode ? 0.97 : 1.0)
+            .scaleEffect(isSelected && isSelectionMode ? 0.96 : 1.0)
             .onChange(of: photoStore.hidePhotosInGallery) { _, hidden in
                 if hidden { thumbnail = nil }
             }
             .task(id: "\(photo.id.uuidString)-\(Int(side * 100))-\(photoStore.hidePhotosInGallery)") {
                 guard !photoStore.hidePhotosInGallery, side > 1 else { return }
                 let loaded = await photoStore.loadThumbnail(for: photo, pointWidth: side, displayScale: displayScale)
-                guard !photoStore.hidePhotosInGallery else { return }
+                // Task cancellation (cell scrolled away) — check before applying
+                guard !Task.isCancelled, !photoStore.hidePhotosInGallery else { return }
                 if let loaded {
                     withAnimation(.easeIn(duration: 0.12)) {
                         thumbnail = loaded
                     }
                 }
+            }
+            .onDisappear {
+                // Cancel any in-flight PHImageManager request for this cell
+                photoStore.cancelThumbnailRequest(for: photo)
             }
         }
         .aspectRatio(1, contentMode: .fit)
@@ -708,6 +757,7 @@ struct ExportCompleteSheet: View {
     let onDismiss: () -> Void
 
     @State private var showShareSheet = false
+    @State private var isPreparingShare = false
 
     var body: some View {
         NavigationStack {
@@ -739,7 +789,10 @@ struct ExportCompleteSheet: View {
 
                 VStack(spacing: 12) {
                     Button {
-                        showShareSheet = true
+                        isPreparingShare = true
+                        DispatchQueue.main.async {
+                            showShareSheet = true
+                        }
                     } label: {
                         HStack(spacing: 10) {
                             Image(systemName: "square.and.arrow.up")
@@ -754,6 +807,7 @@ struct ExportCompleteSheet: View {
                         .cornerRadius(14)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isPreparingShare)
 
                     #if os(macOS)
                     Button {
@@ -791,14 +845,44 @@ struct ExportCompleteSheet: View {
             .navigationTitle("Export Complete")
             #if canImport(UIKit)
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showShareSheet) {
-                ShareSheet(items: [videoURL])
-            }
             #endif
+            .sheet(isPresented: $showShareSheet, onDismiss: {
+                isPreparingShare = false
+            }) {
+                ShareSheet(items: [videoURL])
+                    .onAppear {
+                        isPreparingShare = false
+                    }
+            }
+            .overlay {
+                if isPreparingShare {
+                    ZStack {
+                        Color.black.opacity(0.45)
+                            .ignoresSafeArea()
+                        VStack(spacing: 18) {
+                            ProgressView()
+                                .scaleEffect(1.35)
+                                .tint(.white)
+                            Text("Opening share…")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white)
+                            Text("Hang on while we prepare the share sheet.")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.85))
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(28)
+                        .frame(maxWidth: 280)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                    .allowsHitTesting(true)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { onDismiss() }
                         .fontWeight(.medium)
+                        .disabled(isPreparingShare)
                 }
             }
         }
