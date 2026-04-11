@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var photoStore = PhotoStore()
+    @EnvironmentObject private var photoStore: PhotoStore
     #if !os(macOS) && !targetEnvironment(macCatalyst)
     @State private var showCamera = false
     #endif
@@ -102,5 +102,6 @@ struct CameraPlaceholderView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(PhotoStore())
 }
 

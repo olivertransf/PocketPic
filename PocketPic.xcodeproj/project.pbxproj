@@ -264,6 +264,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				"INFOPLIST_KEY_LSApplicationCategoryType[sdk=macosx*]" = "public.app-category.photography";
+				"INFOPLIST_KEY_LSUIElement[sdk=macosx*]" = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "PocketPic needs camera access to take your daily selfies and create time-lapse videos.";
 				"INFOPLIST_KEY_NSCameraUsageDescription[sdk=macosx*]" = "PocketPic needs camera access to take your daily selfies and create time-lapse videos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "PocketPic needs to save your daily selfies to a custom album in your Photos library.";
@@ -317,6 +318,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				"INFOPLIST_KEY_LSApplicationCategoryType[sdk=macosx*]" = "public.app-category.photography";
+				"INFOPLIST_KEY_LSUIElement[sdk=macosx*]" = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "PocketPic needs camera access to take your daily selfies and create time-lapse videos.";
 				"INFOPLIST_KEY_NSCameraUsageDescription[sdk=macosx*]" = "PocketPic needs camera access to take your daily selfies and create time-lapse videos.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "PocketPic needs to save your daily selfies to a custom album in your Photos library.";
