@@ -34,19 +34,9 @@ struct GalleryView: View {
     @State private var deleteTargetPhoto: Photo?
     @State private var showSingleDeleteConfirmation = false
     
-    /// Column count grows with window width; cell size stays between ~96–168 pt.
+    /// Column count grows with window width; cell size stays between ~110–180 pt.
     private var galleryColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 96, maximum: 168), spacing: 3)]
-    }
-    
-    private var groupedBackgroundColor: Color {
-        #if canImport(UIKit)
-        return Color(uiColor: .systemGroupedBackground)
-        #elseif canImport(AppKit)
-        return Color(nsColor: .windowBackgroundColor)
-        #else
-        return Color.clear
-        #endif
+        [GridItem(.adaptive(minimum: 110, maximum: 180), spacing: 1.5)]
     }
     
     var sortedPhotos: [Photo] {
@@ -59,27 +49,82 @@ struct GalleryView: View {
             return photoStore.photos.sorted { $0.filename < $1.filename }
         }
     }
+
+    private var currentStreak: Int {
+        let calendar = Calendar.current
+        let photoDays = Set(photoStore.photos.map { calendar.startOfDay(for: $0.date) })
+        guard !photoDays.isEmpty else { return 0 }
+        var streak = 0
+        var day = calendar.startOfDay(for: Date())
+        if !photoDays.contains(day) {
+            day = calendar.date(byAdding: .day, value: -1, to: day)!
+        }
+        while photoDays.contains(day) {
+            streak += 1
+            day = calendar.date(byAdding: .day, value: -1, to: day)!
+        }
+        return streak
+    }
+
+    private var longestStreak: Int {
+        let calendar = Calendar.current
+        let unique = Array(Set(photoStore.photos.map { calendar.startOfDay(for: $0.date) })).sorted()
+        guard !unique.isEmpty else { return 0 }
+        var longest = 1, current = 1
+        for i in 1..<unique.count {
+            if calendar.date(byAdding: .day, value: 1, to: unique[i - 1]) == unique[i] {
+                current += 1
+                longest = max(longest, current)
+            } else {
+                current = 1
+            }
+        }
+        return longest
+    }
+
+    private var photosByMonth: [(String, [Photo])] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+        var result: [(String, [Photo])] = []
+        var indexMap: [String: Int] = [:]
+        for photo in sortedPhotos {
+            let key = formatter.string(from: photo.date)
+            if let idx = indexMap[key] {
+                result[idx].1.append(photo)
+            } else {
+                indexMap[key] = result.count
+                result.append((key, [photo]))
+            }
+        }
+        return result
+    }
     
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.systemGroupedBackground
-                    .ignoresSafeArea()
-                
+                Color.systemGroupedBackground.ignoresSafeArea()
+
                 if photoStore.photos.isEmpty {
-                    VStack(spacing: 20) {
-                        Image(systemName: "person.crop.rectangle.stack")
-                            .font(.system(size: 48, weight: .thin))
-                            .foregroundStyle(Color.appAccent)
-
-                        VStack(spacing: 6) {
-                            Text("No Photos Yet")
-                                .font(.headline)
-
-                            Text("Open the Camera tab to take your first photo.")
+                    VStack(spacing: 32) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.appAccent.opacity(0.06))
+                                .frame(width: 160, height: 160)
+                            Circle()
+                                .fill(Color.appAccent.opacity(0.1))
+                                .frame(width: 112, height: 112)
+                            Image(systemName: "camera.viewfinder")
+                                .font(.system(size: 46, weight: .light))
+                                .foregroundStyle(Color.appAccent)
+                        }
+                        VStack(spacing: 10) {
+                            Text("Your Journey Starts Here")
+                                .font(.title2.weight(.bold))
+                            Text("Take your first photo to begin\ntracking your transformation over time.")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.center)
+                                .lineSpacing(2)
                         }
                     }
                     .padding(.top, 80)
@@ -87,60 +132,104 @@ struct GalleryView: View {
                     .transition(.opacity)
                 } else {
                     ScrollView {
-                        LazyVGrid(columns: galleryColumns, spacing: 3) {
-                            ForEach(sortedPhotos) { photo in
-                                PhotoThumbnailCard(
-                                    photo: photo,
-                                    isSelected: selectedPhotos.contains(photo.id),
-                                    isSelectionMode: isSelectionMode
-                                )
-                                .onTapGesture {
-                                    if isSelectionMode {
-                                        withAnimation(.spring(response: 0.3)) {
-                                            toggleSelection(photo: photo)
+                        LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            StreakCard(
+                                currentStreak: currentStreak,
+                                longestStreak: longestStreak,
+                                totalPhotos: sortedPhotos.count
+                            )
+                            .padding(.bottom, 4)
+
+                            ForEach(Array(photosByMonth.enumerated()), id: \.offset) { _, group in
+                                let (monthKey, monthPhotos) = group
+                                Section {
+                                    LazyVGrid(columns: galleryColumns, spacing: 1.5) {
+                                        ForEach(monthPhotos) { photo in
+                                            PhotoThumbnailCard(
+                                                photo: photo,
+                                                isSelected: selectedPhotos.contains(photo.id),
+                                                isSelectionMode: isSelectionMode
+                                            )
+                                            .onTapGesture {
+                                                if isSelectionMode {
+                                                    withAnimation(.spring(response: 0.3)) {
+                                                        toggleSelection(photo: photo)
+                                                    }
+                                                } else {
+                                                    detailPhoto = photo
+                                                }
+                                            }
+                                            .onLongPressGesture(minimumDuration: 0.4) {
+                                                if !isSelectionMode {
+                                                    deleteTargetPhoto = photo
+                                                    showSingleDeleteConfirmation = true
+                                                }
+                                            }
+                                            .contextMenu {
+                                                if !isSelectionMode {
+                                                    Button {
+                                                        detailPhoto = photo
+                                                    } label: {
+                                                        Label("View Photo", systemImage: "photo")
+                                                    }
+                                                    Button {
+                                                        showEyeDetectionPhoto = photo
+                                                    } label: {
+                                                        Label("Detect Eye Positions", systemImage: "eye")
+                                                    }
+                                                    .disabled(!photoStore.canLoadImage(for: photo))
+                                                    Divider()
+                                                    Button(role: .destructive) {
+                                                        deleteTargetPhoto = photo
+                                                        showSingleDeleteConfirmation = true
+                                                    } label: {
+                                                        Label("Delete", systemImage: "trash")
+                                                    }
+                                                }
+                                            }
                                         }
-                                    } else {
-                                        detailPhoto = photo
                                     }
-                                }
-                                .onLongPressGesture(minimumDuration: 0.4) {
-                                    if !isSelectionMode {
-                                        deleteTargetPhoto = photo
-                                        showSingleDeleteConfirmation = true
+                                } header: {
+                                    HStack {
+                                        Text(monthKey)
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        Text("\(monthPhotos.count)")
+                                            .font(.system(size: 11, weight: .bold))
+                                            .foregroundStyle(.secondary)
+                                            .monospacedDigit()
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 3)
+                                            .background(Color.secondary.opacity(0.1), in: Capsule())
                                     }
-                                }
-                                .contextMenu {
-                                    if !isSelectionMode {
-                                        Button {
-                                            detailPhoto = photo
-                                        } label: {
-                                            Label("View Photo", systemImage: "photo")
-                                        }
-                                        Button {
-                                            showEyeDetectionPhoto = photo
-                                        } label: {
-                                            Label("Detect Eye Positions", systemImage: "eye")
-                                        }
-                                        .disabled(!photoStore.canLoadImage(for: photo))
-                                        Divider()
-                                        Button(role: .destructive) {
-                                            deleteTargetPhoto = photo
-                                            showSingleDeleteConfirmation = true
-                                        } label: {
-                                            Label("Delete", systemImage: "trash")
-                                        }
-                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .background(.thinMaterial)
                                 }
                             }
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.top, 1)
+                    }
+                    .safeAreaInset(edge: .bottom) {
+                        if !isSelectionMode {
+                            HStack(spacing: 6) {
+                                Image(systemName: "photo.stack")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(Color.appAccent)
+                                Text("\(sortedPhotos.count) \(sortedPhotos.count == 1 ? "photo" : "photos")")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(.thinMaterial)
+                        }
                     }
                 }
             }
             .navigationTitle(isSelectionMode ? "\(selectedPhotos.count) Selected" : "Gallery")
             #if canImport(UIKit)
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(isSelectionMode ? .inline : .large)
             #endif
             .toolbar {
                 #if canImport(UIKit)
@@ -386,6 +475,88 @@ struct GalleryView: View {
     }
 }
 
+struct StreakCard: View {
+    let currentStreak: Int
+    let longestStreak: Int
+    let totalPhotos: Int
+
+    private var streakActive: Bool { currentStreak > 0 }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // Hero — current streak
+            VStack(spacing: 5) {
+                HStack(alignment: .bottom, spacing: 4) {
+                    Text("\(currentStreak)")
+                        .font(.system(size: 36, weight: .heavy, design: .rounded))
+                        .foregroundStyle(streakActive ? Color.orange : Color.primary.opacity(0.25))
+                        .contentTransition(.numericText())
+                    Image(systemName: "flame.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(
+                            streakActive
+                                ? AnyShapeStyle(LinearGradient(colors: [.orange, .red], startPoint: .top, endPoint: .bottom))
+                                : AnyShapeStyle(Color.secondary.opacity(0.25))
+                        )
+                        .padding(.bottom, 4)
+                }
+                Text("DAY STREAK")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .kerning(1)
+            }
+            .frame(maxWidth: .infinity)
+
+            Rectangle()
+                .fill(Color.secondary.opacity(0.15))
+                .frame(width: 1, height: 46)
+
+            // Best streak
+            VStack(spacing: 5) {
+                HStack(alignment: .bottom, spacing: 4) {
+                    Text("\(longestStreak)")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                    Image(systemName: "trophy.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.yellow)
+                        .padding(.bottom, 2)
+                }
+                Text("BEST")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .kerning(1)
+            }
+            .frame(maxWidth: .infinity)
+
+            Rectangle()
+                .fill(Color.secondary.opacity(0.15))
+                .frame(width: 1, height: 46)
+
+            // Total photos
+            VStack(spacing: 5) {
+                HStack(alignment: .bottom, spacing: 4) {
+                    Text("\(totalPhotos)")
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                    Image(systemName: "photo.stack.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.appAccent)
+                        .padding(.bottom, 2)
+                }
+                Text("PHOTOS")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .kerning(1)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .padding(.vertical, 20)
+        .background(Color.systemBackground, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.07), radius: 12, x: 0, y: 3)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+    }
+}
+
 struct PhotoThumbnailCard: View {
     @EnvironmentObject var photoStore: PhotoStore
     @Environment(\.displayScale) private var displayScale
@@ -435,12 +606,13 @@ struct PhotoThumbnailCard: View {
                         Spacer()
                         HStack {
                             Text(photo.date, format: .dateTime.month(.abbreviated).day())
-                                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 5)
+                                .font(.system(size: 9, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
                                 .padding(.vertical, 3)
-                                .background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 5))
-                                .padding(6)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .shadow(color: .black.opacity(0.3), radius: 2)
+                                .padding(5)
                             Spacer()
                         }
                     }
@@ -521,140 +693,50 @@ struct ExportSheetView: View {
     }
     
     
-    private var emptyStateView: some View {
-        VStack(spacing: 32) {
-            Image(systemName: "film")
-                .font(.system(size: 60))
-                .foregroundStyle(Color.appAccent)
-            
-            VStack(spacing: 12) {
-                Text("No Photos to Export")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                
-                Text("Take some selfies first to create your montage")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
+    private var summaryRow: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.appAccent.opacity(0.12))
+                    .frame(width: 44, height: 44)
+                Image(systemName: "film.stack")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(Color.appAccent)
             }
-        }
-        .padding(.top, 120)
-        .padding(.bottom, 40)
-    }
-    
-    private var headerCard: some View {
-        VStack(spacing: 16) {
-            Text("\(photoStore.photos.count) \(photoStore.photos.count == 1 ? "Photo" : "Photos")")
-                .font(.title2)
-                .fontWeight(.bold)
-            
-            Text("Duration: \(String(format: "%.1f", videoDuration))s • Size: \(estimatedFileSize)")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-        }
-        .padding(.vertical, 20)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.systemBackground)
-                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-        )
-        .padding(.horizontal)
-    }
-    
-    private var fpsSelectionCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Frame Rate")
-                .font(.headline)
-                .fontWeight(.semibold)
-            
-            HStack(spacing: 10) {
-                ForEach(exportViewModel.availableFPSOptions, id: \.self) { fps in
-                    fpsButton(fps: fps)
-                }
-            }
-            
-            Text(photoStore.useNativeResolution ? "Native resolution • HEVC" : "Auto orientation • H.264 • 1080p")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.systemBackground)
-                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-        )
-        .padding(.horizontal)
-    }
-    
-    private var alignEyesCard: some View {
-        Toggle(isOn: $exportViewModel.alignEyes) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Align eyes")
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(photoStore.photos.count) \(photoStore.photos.count == 1 ? "photo" : "photos")")
                     .font(.headline)
-                    .fontWeight(.semibold)
-                Text("Line up eyes across frames for a smoother montage")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                Text("\(String(format: "%.1f", videoDuration))s · \(estimatedFileSize)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
+            Spacer()
         }
-        .padding(20)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.systemBackground)
-                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-        )
-        .padding(.horizontal)
+        .padding(.vertical, 4)
     }
-    
-    private func fpsButton(fps: Int) -> some View {
-        Button(action: {
-            withAnimation(.spring(response: 0.3)) {
-                exportViewModel.selectedFPS = fps
-            }
-        }) {
-            Text("\(fps)")
-                .font(.system(.body, design: .monospaced))
-                .fontWeight(.semibold)
-                .foregroundColor(exportViewModel.selectedFPS == fps ? .white : .primary)
-                .frame(width: 50, height: 50)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(
-                            exportViewModel.selectedFPS == fps ?
-                            AnyShapeStyle(Color.appAccent) :
-                            AnyShapeStyle(Color.secondary.opacity(0.12))
-                        )
-                )
-                .scaleEffect(exportViewModel.selectedFPS == fps ? 1.05 : 1.0)
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-    
+
     private var exportButton: some View {
-        Button(action: {
+        Button {
             Task {
                 await exportViewModel.exportVideo(photos: photoStore.photos, photoStore: photoStore)
             }
-        }) {
-            HStack(spacing: 14) {
+        } label: {
+            HStack(spacing: 10) {
                 Image(systemName: "square.and.arrow.up.fill")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold))
                 Text("Export Montage")
                     .font(.headline)
-                    .fontWeight(.semibold)
             }
-            .foregroundColor(.white)
+            .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
-            .background(Color.appAccent)
-            .cornerRadius(18)
-            .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 4)
+            .padding(.vertical, 16)
+            .background(Color.appAccent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .padding(.horizontal)
         .buttonStyle(.plain)
         .disabled(exportViewModel.isExporting)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(.thinMaterial)
     }
 
     private var exportingOverlay: some View {
@@ -710,23 +792,69 @@ struct ExportSheetView: View {
     
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 32) {
-                    if photoStore.photos.isEmpty {
-                        emptyStateView
-                    } else {
-                        headerCard
-                        alignEyesCard
-                        fpsSelectionCard
+            Group {
+                if photoStore.photos.isEmpty {
+                    VStack(spacing: 32) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.appAccent.opacity(0.06))
+                                .frame(width: 140, height: 140)
+                            Circle()
+                                .fill(Color.appAccent.opacity(0.11))
+                                .frame(width: 100, height: 100)
+                            Image(systemName: "film.stack")
+                                .font(.system(size: 44, weight: .light))
+                                .foregroundStyle(Color.appAccent)
+                        }
+                        VStack(spacing: 10) {
+                            Text("No Photos to Export")
+                                .font(.title2.weight(.bold))
+                            Text("Take some selfies first to create your montage.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .padding(.horizontal, 40)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.systemGroupedBackground)
+                } else {
+                    Form {
+                        Section {
+                            summaryRow
+                        }
+
+                        Section {
+                            Picker("", selection: $exportViewModel.selectedFPS) {
+                                ForEach(exportViewModel.availableFPSOptions, id: \.self) { fps in
+                                    Text("\(fps) fps").tag(fps)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                        } header: {
+                            Text("Frame Rate")
+                        } footer: {
+                            Text(photoStore.useNativeResolution ? "Native resolution · HEVC" : "Auto orientation · H.264 · 1080p")
+                        }
+
+                        Section {
+                            Toggle(isOn: $exportViewModel.alignEyes) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Align Eyes")
+                                    Text("Lines up eyes across frames for a smoother montage")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .tint(Color.appAccent)
+                        } header: {
+                            Text("Options")
+                        }
+                    }
+                    .safeAreaInset(edge: .bottom) {
                         exportButton
                     }
                 }
-                .padding(.vertical, 16)
-                .padding(.bottom, 20)
-            }
-            .background(Color.systemGroupedBackground)
-            .safeAreaInset(edge: .bottom) {
-                Color.clear.frame(height: 0)
             }
             .navigationTitle("Export Montage")
             #if canImport(UIKit)

@@ -20,7 +20,7 @@ typealias PlatformImage = NSImage
 
 extension Color {
     /// Primary tint used throughout the app.
-    static var appAccent: Color { Color(red: 0.45, green: 0.25, blue: 0.88) }
+    static var appAccent: Color { Color(red: 0.051, green: 0.580, blue: 0.533) }
 
     static var systemBackground: Color {
         #if canImport(UIKit)

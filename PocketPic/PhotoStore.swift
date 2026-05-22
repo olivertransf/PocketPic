@@ -88,53 +88,44 @@ class PhotoStore: ObservableObject {
         setupMemoryWarningObserver()
     }
     
-    func savePhoto(_ image: PlatformImage) {
+    @discardableResult
+    func savePhoto(_ image: PlatformImage) async -> Bool {
         let photo = Photo(filename: "\(UUID().uuidString).jpg")
         let imageURL = photosDirectory.appendingPathComponent(photo.filename)
-        
-        // Save image to disk with maximum quality
-        var saveSuccess = false
-        
-        #if canImport(UIKit)
-        if let imageData = image.jpegData(compressionQuality: 1.0) {
-            do {
-                try imageData.write(to: imageURL)
-                print("Saved high-quality image locally: \(imageData.count) bytes, size: \(image.size)")
-                saveSuccess = true
-            } catch {
-                print("Error saving image to disk: \(error.localizedDescription)")
-                return
+
+        let saveSuccess = await Task.detached(priority: .userInitiated) { () -> Bool in
+            #if canImport(UIKit)
+            guard let imageData = image.jpegData(compressionQuality: 1.0) else {
+                print("Error: Failed to generate JPEG data from image")
+                return false
             }
-        } else {
-            print("Error: Failed to generate JPEG data from image")
-            return
-        }
-        #elseif canImport(AppKit)
-        if let tiffData = image.tiffRepresentation,
-           let bitmapImage = NSBitmapImageRep(data: tiffData),
-           let imageData = bitmapImage.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) {
+            #elseif canImport(AppKit)
+            guard let tiffData = image.tiffRepresentation,
+                  let bitmapImage = NSBitmapImageRep(data: tiffData),
+                  let imageData = bitmapImage.representation(using: .jpeg, properties: [.compressionFactor: 0.95]) else {
+                print("Error: Failed to generate JPEG data from image")
+                return false
+            }
+            #else
+            return false
+            #endif
+
             do {
                 try imageData.write(to: imageURL)
                 print("Saved high-quality image locally: \(imageData.count) bytes")
-                saveSuccess = true
+                return true
             } catch {
                 print("Error saving image to disk: \(error.localizedDescription)")
-                return
+                return false
             }
-        } else {
-            print("Error: Failed to generate JPEG data from image")
-            return
-        }
-        #endif
-        
-        // Only add to photos array if save was successful
-        if saveSuccess {
-            photos.append(photo)
-            saveMetadata()
-            
-            // Save to Photos library asynchronously (non-blocking)
-            saveToPhotosLibrary(image: image, albumName: targetAlbum)
-        }
+        }.value
+
+        guard saveSuccess else { return false }
+
+        photos.append(photo)
+        saveMetadata()
+        saveToPhotosLibrary(image: image, albumName: targetAlbum)
+        return true
     }
     
     func loadPhotosFromAlbum() {
@@ -394,6 +385,18 @@ class PhotoStore: ObservableObject {
         photosDirectory.appendingPathComponent(photo.filename)
     }
     
+    func createAlbum(named name: String) async -> Bool {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else { return false }
+        return await withCheckedContinuation { continuation in
+            PHPhotoLibrary.shared().performChanges({
+                PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: name)
+            }) { success, _ in
+                continuation.resume(returning: success)
+            }
+        }
+    }
+
     func setTargetAlbum(_ albumName: String) {
         targetAlbum = albumName
         saveSettings()

@@ -24,256 +24,128 @@ struct SettingsView: View {
     var body: some View {
         #if canImport(UIKit)
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Photo Storage Card
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Image(systemName: "photo.on.rectangle.angled")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("Photo Storage")
-                                .font(.headline)
+            Form {
+                Section {
+                    HStack {
+                        Text("Save to Album")
+                        Spacer()
+                        Button(selectedAlbum) {
+                            showingAlbumPicker = true
                         }
-                        
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Save to Album")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Button(selectedAlbum) {
-                                    showingAlbumPicker = true
-                                }
-                                .foregroundColor(.appAccent)
-                                .fontWeight(.medium)
-                            }
-                            
-                            Text("Photos will be saved to the selected album in your Photos library")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.leading, 32)
+                        .foregroundStyle(Color.appAccent)
+                        .fontWeight(.medium)
                     }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
-                    
-                    // Camera Card
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Image(systemName: "camera")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("Camera")
-                                .font(.headline)
-                        }
+                } header: {
+                    Text("Photo Storage")
+                } footer: {
+                    Text("Photos are saved to this album in your Photos library.")
+                }
 
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Default Camera")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Picker("", selection: Binding(
-                                    get: { photoStore.defaultCameraPosition },
-                                    set: { photoStore.setDefaultCameraPosition($0) }
-                                )) {
-                                    Text("Front").tag("front")
-                                    Text("Back").tag("back")
-                                }
-                                .pickerStyle(.segmented)
-                                .frame(width: 140)
-                            }
-
-                            Text("Which camera opens when you start a session")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                Section {
+                    HStack {
+                        Text("Default Camera")
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { photoStore.defaultCameraPosition },
+                            set: { photoStore.setDefaultCameraPosition($0) }
+                        )) {
+                            Text("Front").tag("front")
+                            Text("Back").tag("back")
                         }
-                        .padding(.leading, 32)
+                        .pickerStyle(.segmented)
+                        .frame(width: 140)
                     }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
+                } header: {
+                    Text("Camera")
+                } footer: {
+                    Text("Which camera opens when you start a session.")
+                }
 
-                    // Camera Overlay Card
-                    VStack(alignment: .leading, spacing: 16) {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Image(systemName: "person.crop.rectangle.stack")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("Camera Overlay")
-                                .font(.headline)
+                            Text("Overlay Opacity")
+                            Spacer()
+                            Text("\(Int(photoStore.overlayOpacity * 100))%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                                .font(.subheadline.monospacedDigit())
                         }
-
-                        VStack(alignment: .leading, spacing: 16) {
-                            HStack {
-                                Text("Overlay Opacity")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Text("\(Int(photoStore.overlayOpacity * 100))%")
-                                    .foregroundStyle(Color.appAccent)
-                                    .fontWeight(.semibold)
-                            }
-
-                            Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1) {
-                                Text("Opacity")
-                            } minimumValueLabel: {
-                                Text("10%")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            } maximumValueLabel: {
-                                Text("100%")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
+                        Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1)
                             .tint(Color.appAccent)
                             .onChange(of: photoStore.overlayOpacity) { _, newValue in
                                 photoStore.setOverlayOpacity(newValue)
                             }
-
-                            Text("Adjust how transparent the previous photo appears in the camera preview")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.leading, 32)
                     }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
-
-                    // About Card
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Image(systemName: "info.circle")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("About")
-                                .font(.headline)
-                        }
-
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Photos")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Text("\(photoStore.photos.count)")
-                                    .foregroundStyle(Color.appAccent)
-                                    .fontWeight(.semibold)
-                                    .font(.system(.body, design: .rounded))
-                            }
-
-                            Divider()
-
-                            Button {
-                                // Replace with your App Store ID before submission
-                                if let url = URL(string: "itms-apps://itunes.apple.com/app/idYOUR_APP_ID?action=write-review") {
-                                    UIApplication.shared.open(url)
-                                }
-                            } label: {
-                                HStack {
-                                    Text("Rate PocketPic")
-                                        .foregroundColor(.primary)
-                                    Spacer()
-                                    Image(systemName: "star")
-                                        .foregroundStyle(Color.appAccent)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.leading, 32)
-                    }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
-
-                    // Export Card
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Image(systemName: "square.and.arrow.up")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("Export")
-                                .font(.headline)
-                        }
-                        
-                        Toggle(isOn: Binding(
-                            get: { photoStore.useNativeResolution },
-                            set: { photoStore.setUseNativeResolution($0) }
-                        )) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Native resolution")
-                                    .foregroundColor(.primary)
-                                Text("Export at the camera's full sensor resolution. Standard mode adapts to portrait or landscape automatically.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .padding(.leading, 32)
-                    }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
-                    
-                    // Gallery privacy
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Image(systemName: "eye.slash")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("Gallery")
-                                .font(.headline)
-                        }
-                        Toggle(isOn: Binding(
-                            get: { photoStore.hidePhotosInGallery },
-                            set: { photoStore.setHidePhotosInGallery($0) }
-                        )) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Hide photos")
-                                    .foregroundColor(.primary)
-                                Text("Gallery shows placeholders until you turn this off.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .padding(.leading, 32)
-                    }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
+                    .padding(.vertical, 2)
+                } header: {
+                    Text("Camera Overlay")
+                } footer: {
+                    Text("How transparent the previous photo appears in the camera viewfinder.")
                 }
-                .padding(.vertical)
+
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { photoStore.hidePhotosInGallery },
+                        set: { photoStore.setHidePhotosInGallery($0) }
+                    )) {
+                        Text("Hide Photos")
+                    }
+                    .tint(Color.appAccent)
+                } header: {
+                    Text("Privacy")
+                } footer: {
+                    Text("Gallery shows placeholders instead of your photos.")
+                }
+
+                Section {
+                    Toggle(isOn: Binding(
+                        get: { photoStore.useNativeResolution },
+                        set: { photoStore.setUseNativeResolution($0) }
+                    )) {
+                        Text("Native Resolution")
+                    }
+                    .tint(Color.appAccent)
+                } header: {
+                    Text("Export")
+                } footer: {
+                    Text("Exports at the camera's full sensor resolution using HEVC. Standard mode outputs 1080p H.264.")
+                }
+
+                Section {
+                    HStack {
+                        Text("Photos")
+                        Spacer()
+                        Text("\(photoStore.photos.count)")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+                            .foregroundStyle(.secondary)
+                    }
+                    Button {
+                        if let url = URL(string: "itms-apps://itunes.apple.com/app/idYOUR_APP_ID?action=write-review") {
+                            UIApplication.shared.open(url)
+                        }
+                    } label: {
+                        HStack {
+                            Text("Rate PocketPic")
+                            Spacer()
+                            Image(systemName: "star.fill")
+                                .foregroundStyle(Color.appAccent)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                } header: {
+                    Text("About")
+                }
             }
-            .background(Color.systemGroupedBackground)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.large)
+            .tint(Color.appAccent)
             .onAppear {
                 selectedAlbum = photoStore.targetAlbum
                 loadAvailableAlbums()
@@ -296,228 +168,68 @@ struct SettingsView: View {
         }
         #elseif canImport(AppKit)
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    // Photo Storage Card
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Image(systemName: "photo.on.rectangle.angled")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("Photo Storage")
-                                .font(.headline)
+            Form {
+                Section("Photo Storage") {
+                    LabeledContent("Save to Album") {
+                        Button(selectedAlbum) {
+                            showingAlbumPicker = true
                         }
-                        
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Save to Album")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Button(selectedAlbum) {
-                                    showingAlbumPicker = true
-                                }
-                                .foregroundColor(.appAccent)
-                                .fontWeight(.medium)
-                            }
-                            
-                            Text("Photos will be saved to the selected album in your Photos library")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.leading, 32)
+                        .foregroundStyle(Color.appAccent)
+                        .fontWeight(.medium)
                     }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
-                    
-                    // Camera Card
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Image(systemName: "camera")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("Camera")
-                                .font(.headline)
-                        }
+                }
 
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Default Camera")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Picker("", selection: Binding(
-                                    get: { photoStore.defaultCameraPosition },
-                                    set: { photoStore.setDefaultCameraPosition($0) }
-                                )) {
-                                    Text("Front").tag("front")
-                                    Text("Back").tag("back")
-                                }
-                                .pickerStyle(.segmented)
-                                .frame(width: 140)
-                            }
-
-                            Text("Which camera opens when you start a session")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.leading, 32)
+                Section("Camera") {
+                    Picker("Default Camera", selection: Binding(
+                        get: { photoStore.defaultCameraPosition },
+                        set: { photoStore.setDefaultCameraPosition($0) }
+                    )) {
+                        Text("Front").tag("front")
+                        Text("Back").tag("back")
                     }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
+                    .pickerStyle(.segmented)
+                }
 
-                    // Camera Overlay Card
-                    VStack(alignment: .leading, spacing: 16) {
+                Section("Camera Overlay") {
+                    VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Image(systemName: "person.crop.rectangle.stack")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("Camera Overlay")
-                                .font(.headline)
+                            Text("Overlay Opacity")
+                            Spacer()
+                            Text("\(Int(photoStore.overlayOpacity * 100))%")
+                                .foregroundStyle(.secondary)
+                                .font(.subheadline.monospacedDigit())
                         }
-
-                        VStack(alignment: .leading, spacing: 16) {
-                            HStack {
-                                Text("Overlay Opacity")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Text("\(Int(photoStore.overlayOpacity * 100))%")
-                                    .foregroundStyle(Color.appAccent)
-                                    .fontWeight(.semibold)
-                            }
-
-                            Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1) {
-                                Text("Opacity")
-                            } minimumValueLabel: {
-                                Text("10%")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            } maximumValueLabel: {
-                                Text("100%")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
+                        Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1)
                             .tint(Color.appAccent)
                             .onChange(of: photoStore.overlayOpacity) { _, newValue in
                                 photoStore.setOverlayOpacity(newValue)
                             }
-
-                            Text("Adjust how transparent the previous photo appears in the camera preview")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.leading, 32)
                     }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
-
-                    // Gallery privacy
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Image(systemName: "eye.slash")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("Gallery")
-                                .font(.headline)
-                        }
-                        Toggle(isOn: Binding(
-                            get: { photoStore.hidePhotosInGallery },
-                            set: { photoStore.setHidePhotosInGallery($0) }
-                        )) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Hide photos")
-                                    .foregroundColor(.primary)
-                                Text("Gallery shows placeholders until you turn this off.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .padding(.leading, 32)
-                    }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
-                    
-                    // About Card
-                    VStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Image(systemName: "info.circle")
-                                .foregroundStyle(Color.appAccent)
-                                .font(.title3)
-                            Text("About")
-                                .font(.headline)
-                        }
-                        
-                        VStack(alignment: .leading, spacing: 12) {
-                            // App Description
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("What is PocketPic?")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.primary)
-                                
-                                Text("PocketPic helps you create time-lapse videos from your selfies. Take consistent photos over time and export them as a beautiful montage video. Perfect for tracking changes, creating memories, or sharing your journey.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            
-                            Divider()
-                            
-                            HStack {
-                                Text("Version")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Text("1.0.0")
-                                    .foregroundColor(.secondary)
-                                    .fontWeight(.medium)
-                            }
-                            
-                            Divider()
-                            
-                            HStack {
-                                Text("Total Photos")
-                                    .foregroundColor(.primary)
-                                Spacer()
-                                Text("\(photoStore.photos.count)")
-                                    .foregroundStyle(Color.appAccent)
-                                    .fontWeight(.semibold)
-                            }
-                        }
-                        .padding(.leading, 32)
-                    }
-                    .padding(20)
-                    .background(
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.systemBackground)
-                            .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 2)
-                    )
-                    .padding(.horizontal)
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical)
+
+                Section("Privacy") {
+                    Toggle("Hide Photos in Gallery", isOn: Binding(
+                        get: { photoStore.hidePhotosInGallery },
+                        set: { photoStore.setHidePhotosInGallery($0) }
+                    ))
+                    .tint(Color.appAccent)
+                }
+
+                Section("Export") {
+                    Toggle("Native Resolution", isOn: Binding(
+                        get: { photoStore.useNativeResolution },
+                        set: { photoStore.setUseNativeResolution($0) }
+                    ))
+                    .tint(Color.appAccent)
+                }
+
+                Section("About") {
+                    LabeledContent("Photos", value: "\(photoStore.photos.count)")
+                    LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+                }
             }
-            .background(Color.systemGroupedBackground)
+            .formStyle(.grouped)
             .navigationTitle("Settings")
             .onAppear {
                 selectedAlbum = photoStore.targetAlbum
@@ -634,21 +346,41 @@ struct AlbumPickerView: View {
     @Binding var selectedAlbum: String
     @Binding var isPresented: Bool
     @EnvironmentObject var photoStore: PhotoStore
-    
+
+    @State private var albums: [String] = []
+    @State private var showNewAlbumAlert = false
+    @State private var newAlbumName = ""
+    @State private var isCreating = false
+    @State private var errorMessage: String?
+
     var body: some View {
         #if canImport(UIKit)
         NavigationStack {
             List {
-                Section(header: Text("Choose Album")) {
-                    ForEach(availableAlbums, id: \.self) { album in
+                Section {
+                    Button {
+                        newAlbumName = ""
+                        showNewAlbumAlert = true
+                    } label: {
+                        Label("New Album", systemImage: "plus.circle.fill")
+                            .foregroundStyle(Color.appAccent)
+                            .fontWeight(.medium)
+                    }
+                }
+
+                Section("My Albums") {
+                    ForEach(albums, id: \.self) { album in
                         HStack {
+                            Image(systemName: "photo.on.rectangle")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20)
                             Text(album)
                                 .font(.body)
                             Spacer()
                             if selectedAlbum == album {
                                 Image(systemName: "checkmark")
                                     .foregroundColor(.appAccent)
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(.system(size: 15, weight: .semibold))
                             }
                         }
                         .contentShape(Rectangle())
@@ -664,54 +396,121 @@ struct AlbumPickerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        isPresented = false
+                    Button("Cancel") { isPresented = false }
+                }
+            }
+            .alert("New Album", isPresented: $showNewAlbumAlert) {
+                TextField("Album Name", text: $newAlbumName)
+                Button("Cancel", role: .cancel) {}
+                Button("Create") { createAlbum() }
+            } message: {
+                Text("Enter a name for the new Photos album.")
+            }
+            .alert("Error", isPresented: .constant(errorMessage != nil)) {
+                Button("OK") { errorMessage = nil }
+            } message: {
+                if let msg = errorMessage { Text(msg) }
+            }
+            .overlay {
+                if isCreating {
+                    ZStack {
+                        Color.black.opacity(0.3).ignoresSafeArea()
+                        ProgressView("Creating…")
+                            .padding(24)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
                     }
                 }
             }
+            .onAppear { albums = availableAlbums }
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         #elseif canImport(AppKit)
         NavigationStack {
-            VStack(spacing: 20) {
-                Text("Select Album")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                    .padding(.top)
-                
-                List(availableAlbums, id: \.self) { album in
-                    HStack {
-                        Text(album)
-                            .font(.body)
-                        Spacer()
-                        if selectedAlbum == album {
-                            Image(systemName: "checkmark")
-                                .foregroundColor(.appAccent)
-                                .font(.system(size: 16, weight: .semibold))
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Select Album")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Button("Cancel") { isPresented = false }
+                        .keyboardShortcut(.escape)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 12)
+
+                Divider()
+
+                List {
+                    Button {
+                        newAlbumName = ""
+                        showNewAlbumAlert = true
+                    } label: {
+                        Label("New Album", systemImage: "plus.circle.fill")
+                            .foregroundStyle(Color.appAccent)
+                            .fontWeight(.medium)
+                    }
+                    .buttonStyle(.plain)
+
+                    Divider()
+
+                    ForEach(albums, id: \.self) { album in
+                        HStack {
+                            Image(systemName: "photo.on.rectangle")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 18)
+                            Text(album)
+                            Spacer()
+                            if selectedAlbum == album {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.appAccent)
+                                    .font(.system(size: 13, weight: .semibold))
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedAlbum = album
+                            photoStore.setTargetAlbum(album)
+                            isPresented = false
                         }
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        selectedAlbum = album
-                        photoStore.setTargetAlbum(album)
-                        isPresented = false
-                    }
                 }
-                .listStyle(PlainListStyle())
-                
-                HStack {
-                    Spacer()
-                    Button("Cancel") {
-                        isPresented = false
-                    }
-                    .keyboardShortcut(.escape)
-                }
-                .padding()
+                .listStyle(.plain)
             }
-            .frame(minWidth: 300, minHeight: 400)
+            .frame(minWidth: 320, minHeight: 420)
+            .alert("New Album", isPresented: $showNewAlbumAlert) {
+                TextField("Album Name", text: $newAlbumName)
+                Button("Cancel", role: .cancel) {}
+                Button("Create") { createAlbum() }
+            } message: {
+                Text("Enter a name for the new Photos album.")
+            }
+            .onAppear { albums = availableAlbums }
         }
         #endif
+    }
+
+    private func createAlbum() {
+        let name = newAlbumName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        isCreating = true
+        Task {
+            let success = await photoStore.createAlbum(named: name)
+            await MainActor.run {
+                isCreating = false
+                if success {
+                    if !albums.contains(name) {
+                        albums.insert(name, at: 1)
+                    }
+                    selectedAlbum = name
+                    photoStore.setTargetAlbum(name)
+                    isPresented = false
+                } else {
+                    errorMessage = "Could not create album \"\(name)\". Check Photos permissions in Settings."
+                }
+            }
+        }
     }
 }
 

@@ -51,6 +51,7 @@ struct ContentView: View {
                 .tag(2)
                 .environmentObject(photoStore)
         }
+        .tint(Color.appAccent)
         .preferredColorScheme(nil)
         #if !os(macOS) && !targetEnvironment(macCatalyst)
         .onChange(of: selectedTab) { oldValue, newValue in
@@ -82,16 +83,26 @@ struct ContentView: View {
 
 struct CameraPlaceholderView: View {
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "camera.aperture")
-                .font(.system(size: 52, weight: .thin))
-                .foregroundStyle(Color.appAccent)
-
-            VStack(spacing: 6) {
-                Text("Open the Camera tab to capture a photo.")
+        VStack(spacing: 28) {
+            ZStack {
+                Circle()
+                    .fill(Color.appAccent.opacity(0.06))
+                    .frame(width: 160, height: 160)
+                Circle()
+                    .fill(Color.appAccent.opacity(0.11))
+                    .frame(width: 112, height: 112)
+                Image(systemName: "camera.aperture")
+                    .font(.system(size: 46, weight: .light))
+                    .foregroundStyle(Color.appAccent)
+            }
+            VStack(spacing: 10) {
+                Text("Ready to Capture")
+                    .font(.title3.weight(.bold))
+                Text("Tap the Camera tab to take your next photo.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .lineSpacing(2)
             }
         }
         .padding(40)

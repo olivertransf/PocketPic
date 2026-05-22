@@ -13,9 +13,12 @@ struct PocketPicApp: App {
 
     var body: some Scene {
         #if os(macOS)
-        MenuBarExtra("PocketPic", systemImage: "camera.viewfinder") {
+        MenuBarExtra {
             PocketPicMenuBarPanel()
                 .environmentObject(photoStore)
+        } label: {
+            Image(systemName: "person.fill.viewfinder")
+                .font(.system(size: 19, weight: .bold))
         }
         .menuBarExtraStyle(.window)
 
