@@ -240,16 +240,26 @@ struct ExportView: View {
                     Text(error)
                 }
             }
-            .sheet(isPresented: $exportViewModel.showShareSheet) {
-                if let videoURL = exportViewModel.exportedVideoURL {
-                    ExportCompleteSheet(
-                        videoURL: videoURL,
-                        previewImage: exportViewModel.exportPreviewImage,
-                        albumName: photoStore.targetAlbum,
-                        exportViewModel: exportViewModel,
-                        onDismiss: { exportViewModel.showShareSheet = false }
-                    )
-                }
+            .onChange(of: exportViewModel.exportedVideoURL) { _, url in
+                guard let url,
+                      !exportViewModel.isExporting,
+                      exportViewModel.completedExport == nil else { return }
+                exportViewModel.completedExport = ExportCompletion(videoURL: url)
+            }
+            .sheet(item: Binding(
+                get: { exportViewModel.completedExport },
+                set: { exportViewModel.completedExport = $0 }
+            )) { completion in
+                ExportCompleteSheet(
+                    videoURL: completion.videoURL,
+                    previewImage: exportViewModel.exportPreviewImage,
+                    exportViewModel: exportViewModel,
+                    onDismiss: {
+                        exportViewModel.completedExport = nil
+                        exportViewModel.exportedVideoURL = nil
+                        exportViewModel.exportPreviewImage = nil
+                    }
+                )
             }
         }
     }

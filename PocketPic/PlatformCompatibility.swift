@@ -27,6 +27,21 @@ extension UIImage {
     nonisolated var pixelSize: CGSize {
         CGSize(width: size.width * scale, height: size.height * scale)
     }
+
+    nonisolated func pocketPicExportPreviewThumbnail(maxPixelDimension: CGFloat = 480) -> UIImage {
+        let pixel = pixelSize
+        guard pixel.width > 0, pixel.height > 0 else { return self }
+        let fit = min(maxPixelDimension / pixel.width, maxPixelDimension / pixel.height, 1)
+        guard fit < 1 else { return normalizedUpOrientation() }
+        let thumbSize = CGSize(width: pixel.width * fit, height: pixel.height * fit)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: thumbSize, format: format)
+        return renderer.image { _ in
+            normalizedUpOrientation().draw(in: CGRect(origin: .zero, size: thumbSize))
+        }
+    }
 }
 #elseif canImport(AppKit)
 import AppKit
@@ -53,6 +68,20 @@ extension NSImage {
             return self
         }
         return NSImage(cgImage: normalizedCGImage, size: pixelSize)
+    }
+
+    nonisolated func pocketPicExportPreviewThumbnail(maxPixelDimension: CGFloat = 480) -> NSImage {
+        let normalized = normalizedUpOrientation()
+        let pixel = normalized.pixelSize
+        guard pixel.width > 0, pixel.height > 0 else { return normalized }
+        let fit = min(maxPixelDimension / pixel.width, maxPixelDimension / pixel.height, 1)
+        guard fit < 1 else { return normalized }
+        let thumbSize = NSSize(width: pixel.width * fit, height: pixel.height * fit)
+        let thumbnail = NSImage(size: thumbSize)
+        thumbnail.lockFocus()
+        normalized.draw(in: NSRect(origin: .zero, size: thumbSize))
+        thumbnail.unlockFocus()
+        return thumbnail
     }
 
     nonisolated var pixelSize: CGSize {
@@ -176,9 +205,9 @@ extension View {
         #elseif canImport(UIKit)
         switch size {
         case .export:
-            presentationDetents([.height(520), .large])
+            presentationDetents([.large])
         case .exportComplete:
-            presentationDetents([.height(540)])
+            presentationDetents([.large])
         case .eyeDetection:
             presentationDetents([.large])
         case .albumPicker:
@@ -187,7 +216,9 @@ extension View {
             presentationDetents([.large])
         }
         presentationDragIndicator(.visible)
-        presentationBackground(Color.systemGroupedBackground)
+        if size != .export {
+            presentationBackground(Color.systemGroupedBackground)
+        }
         #else
         self
         #endif

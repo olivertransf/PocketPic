@@ -32,7 +32,7 @@ struct GalleryView: View {
     @State private var selectedPhotos: Set<Photo.ID> = []
     @State private var showDeleteConfirmation = false
     @State private var showExportSheet = false
-    @State private var pendingShareSheet = false
+    @State private var pendingExportCompletion = false
     @State private var showEyeDetectionPhoto: Photo?
     @State private var detailPhoto: Photo?
     @State private var deleteTargetPhoto: Photo?
@@ -127,10 +127,10 @@ struct GalleryView: View {
                 .modifier(GalleryOverlaysModifier(
                     showDeleteConfirmation: $showDeleteConfirmation,
                     showExportSheet: $showExportSheet,
+                    pendingExportCompletion: $pendingExportCompletion,
                     showSingleDeleteConfirmation: $showSingleDeleteConfirmation,
                     showEyeDetectionPhoto: $showEyeDetectionPhoto,
                     detailPhoto: $detailPhoto,
-                    pendingShareSheet: $pendingShareSheet,
                     deleteTargetPhoto: $deleteTargetPhoto,
                     exportViewModel: exportViewModel,
                     photoStore: photoStore,
@@ -674,7 +674,6 @@ struct ExportSheetView: View {
     @EnvironmentObject var photoStore: PhotoStore
     @ObservedObject var exportViewModel: ExportViewModel
     @Binding var showExportSheet: Bool
-    @Environment(\.dismiss) private var dismiss
     
     private var videoDuration: Double {
         Double(photoStore.photos.count) / Double(exportViewModel.selectedFPS)
@@ -710,88 +709,88 @@ struct ExportSheetView: View {
         .padding(.vertical, 4)
     }
 
-    var body: some View {
-        NavigationStack {
-            Group {
-                if photoStore.photos.isEmpty {
-                    ContentUnavailableView(
-                        "No Photos to Export",
-                        systemImage: "film.stack",
-                        description: Text("Take some photos first to create your montage.")
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ScrollView {
-                        VStack(spacing: 20) {
-                            summaryRow
-                                .padding(16)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.systemBackground, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    private var exportButton: some View {
+        Button {
+            Task {
+                await exportViewModel.exportVideo(photos: photoStore.photos, photoStore: photoStore)
+            }
+        } label: {
+            Text("Export Montage")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(exportViewModel.isExporting)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+    }
 
-                            PocketPicSectionCard("Frame Rate", content: {
-                                Picker("", selection: $exportViewModel.selectedFPS) {
-                                    ForEach(exportViewModel.availableFPSOptions, id: \.self) { fps in
-                                        Text("\(fps) fps").tag(fps)
-                                    }
-                                }
-                                .pickerStyle(.segmented)
-                                .labelsHidden()
-                            }, footer: {
-                                Text(photoStore.useNativeResolution ? "Native resolution · HEVC" : "Auto orientation · H.264 · 1080p")
+    var body: some View {
+        Group {
+            if photoStore.photos.isEmpty {
+                ContentUnavailableView(
+                    "No Photos to Export",
+                    systemImage: "film.stack",
+                    description: Text("Take some photos first to create your montage.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Form {
+                    Section {
+                        summaryRow
+                    }
+
+                    Section {
+                        Picker("Frame Rate", selection: $exportViewModel.selectedFPS) {
+                            ForEach(exportViewModel.availableFPSOptions, id: \.self) { fps in
+                                Text("\(fps) fps").tag(fps)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                    } footer: {
+                        Text(photoStore.useNativeResolution ? "Native resolution · HEVC" : "Auto orientation · H.264 · 1080p")
+                    }
+
+                    Section {
+                        Toggle(isOn: $exportViewModel.alignEyes) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Align Eyes")
+                                Text("Lines up eyes across frames for a smoother montage")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                            })
-
-                            PocketPicSectionCard("Options") {
-                                Toggle(isOn: $exportViewModel.alignEyes) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Align Eyes")
-                                        Text("Lines up eyes across frames for a smoother montage")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .tint(Color.appAccent)
                             }
-
-                            Button {
-                                Task {
-                                    await exportViewModel.exportVideo(photos: photoStore.photos, photoStore: photoStore)
-                                }
-                            } label: {
-                                Text("Export Montage")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
-                            .disabled(exportViewModel.isExporting)
                         }
-                        .padding(20)
+                        .tint(Color.appAccent)
+                    } header: {
+                        Text("Options")
                     }
                 }
-            }
-            .background(Color.systemGroupedBackground)
-            .navigationTitle("Export Montage")
-            #if canImport(UIKit)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                    .fontWeight(.medium)
-                    .disabled(exportViewModel.isExporting)
-                }
-            }
-            .overlay {
-                if exportViewModel.isExporting {
-                    exportingOverlay
-                        .transition(.opacity.animation(.easeInOut(duration: 0.25)))
+                .safeAreaInset(edge: .bottom) {
+                    exportButton
                 }
             }
         }
-        .pocketPicModalPresentation(.export)
+        .navigationTitle("Export Montage")
+        #if canImport(UIKit)
+        .navigationBarTitleDisplayMode(.inline)
+        .interactiveDismissDisabled(exportViewModel.isExporting)
+        #endif
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    showExportSheet = false
+                }
+                .fontWeight(.medium)
+                .disabled(exportViewModel.isExporting)
+            }
+        }
+        .overlay {
+            if exportViewModel.isExporting {
+                exportingOverlay
+                    .transition(.opacity.animation(.easeInOut(duration: 0.25)))
+            }
+        }
     }
 
     private var exportingOverlay: some View {
@@ -849,7 +848,6 @@ struct ExportSheetView: View {
 struct ExportCompleteSheet: View {
     let videoURL: URL
     let previewImage: PlatformImage?
-    let albumName: String
     @ObservedObject var exportViewModel: ExportViewModel
     let onDismiss: () -> Void
 
@@ -859,27 +857,26 @@ struct ExportCompleteSheet: View {
     @State private var didSaveToPhotos = false
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    exportPreview
+        ScrollView {
+            VStack(spacing: 24) {
+                exportPreview
 
-                    VStack(spacing: 6) {
-                        Label("Montage Ready", systemImage: "checkmark.circle.fill")
-                            .font(.headline)
-                            .foregroundStyle(Color.appAccent)
-                        Text("Your time-lapse video has been created.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
+                VStack(spacing: 6) {
+                    Label("Montage Ready", systemImage: "checkmark.circle.fill")
+                        .font(.headline)
+                        .foregroundStyle(Color.appAccent)
+                    Text("Your time-lapse video has been created.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
 
-                    VStack(spacing: 10) {
+                VStack(spacing: 10) {
                         Button {
                             Task {
                                 isSavingToPhotos = true
                                 exportViewModel.errorMessage = nil
-                                await exportViewModel.saveToPhotos(videoURL: videoURL, albumName: albumName)
+                                await exportViewModel.saveToPhotos(videoURL: videoURL)
                                 isSavingToPhotos = false
                                 if exportViewModel.errorMessage == nil {
                                     didSaveToPhotos = true
@@ -923,7 +920,7 @@ struct ExportCompleteSheet: View {
                         Button {
                             SaveToFileHelper.showSavePanel(
                                 sourceURL: videoURL,
-                                onSuccess: { exportViewModel.showShareSheet = false },
+                                onSuccess: { exportViewModel.completedExport = nil },
                                 onError: { exportViewModel.errorMessage = $0 }
                             )
                         } label: {
@@ -934,49 +931,47 @@ struct ExportCompleteSheet: View {
                         .controlSize(.large)
                         .disabled(isSavingToPhotos || isPreparingShare)
                         #endif
-                    }
-                }
-                .padding(24)
-                .frame(maxWidth: .infinity)
-            }
-            .background(Color.systemGroupedBackground)
-            .navigationTitle("Export Complete")
-            #if canImport(UIKit)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .alert("Error", isPresented: .constant(exportViewModel.errorMessage != nil)) {
-                Button("OK") {
-                    exportViewModel.errorMessage = nil
-                }
-            } message: {
-                if let error = exportViewModel.errorMessage {
-                    Text(error)
                 }
             }
-            #if !os(macOS)
-            .sheet(isPresented: $showShareSheet, onDismiss: {
-                isPreparingShare = false
-            }) {
-                ShareSheet(items: [videoURL])
-                    .onAppear {
-                        isPreparingShare = false
-                    }
+            .padding(24)
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color.systemGroupedBackground)
+        .navigationTitle("Export Complete")
+        #if canImport(UIKit)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+        .alert("Error", isPresented: .constant(exportViewModel.errorMessage != nil)) {
+            Button("OK") {
+                exportViewModel.errorMessage = nil
             }
-            .overlay {
-                if isPreparingShare {
-                    sharePreparingOverlay
-                }
-            }
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { onDismiss() }
-                        .fontWeight(.medium)
-                        .disabled(isSavingToPhotos || isPreparingShare)
-                }
+        } message: {
+            if let error = exportViewModel.errorMessage {
+                Text(error)
             }
         }
-        .pocketPicModalPresentation(.exportComplete)
+        #if !os(macOS)
+        .sheet(isPresented: $showShareSheet, onDismiss: {
+            isPreparingShare = false
+        }) {
+            ShareSheet(items: [videoURL])
+                .onAppear {
+                    isPreparingShare = false
+                }
+        }
+        .overlay {
+            if isPreparingShare {
+                sharePreparingOverlay
+            }
+        }
+        #endif
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Done") { onDismiss() }
+                    .fontWeight(.medium)
+                    .disabled(isSavingToPhotos || isPreparingShare)
+            }
+        }
     }
 
     @ViewBuilder
@@ -1291,10 +1286,10 @@ struct EyeDetectionContentView: View {
 private struct GalleryOverlaysModifier: ViewModifier {
     @Binding var showDeleteConfirmation: Bool
     @Binding var showExportSheet: Bool
+    @Binding var pendingExportCompletion: Bool
     @Binding var showSingleDeleteConfirmation: Bool
     @Binding var showEyeDetectionPhoto: Photo?
     @Binding var detailPhoto: Photo?
-    @Binding var pendingShareSheet: Bool
     @Binding var deleteTargetPhoto: Photo?
     @ObservedObject var exportViewModel: ExportViewModel
     let photoStore: PhotoStore
@@ -1312,8 +1307,29 @@ private struct GalleryOverlaysModifier: ViewModifier {
                 Text("Are you sure you want to delete \(selectedPhotoCount) photo\(selectedPhotoCount == 1 ? "" : "s")? This action cannot be undone.")
             }
             .sheet(isPresented: $showExportSheet) {
-                ExportSheetView(exportViewModel: exportViewModel, showExportSheet: $showExportSheet)
-                    .environmentObject(photoStore)
+                NavigationStack {
+                    ExportSheetView(exportViewModel: exportViewModel, showExportSheet: $showExportSheet)
+                        .environmentObject(photoStore)
+                }
+                #if canImport(UIKit)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                #else
+                .pocketPicModalPresentation(.export)
+                #endif
+            }
+            .onChange(of: exportViewModel.isExporting) { wasExporting, isExporting in
+                guard wasExporting, !isExporting, exportViewModel.exportedVideoURL != nil else { return }
+                pendingExportCompletion = true
+                showExportSheet = false
+            }
+            .onChange(of: showExportSheet) { _, isShowing in
+                guard !isShowing, pendingExportCompletion else { return }
+                pendingExportCompletion = false
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(400))
+                    presentExportCompletionIfNeeded(exportSheetVisible: false)
+                }
             }
             .alert("Error", isPresented: .constant(exportViewModel.errorMessage != nil)) {
                 Button("OK") {
@@ -1324,33 +1340,28 @@ private struct GalleryOverlaysModifier: ViewModifier {
                     Text(error)
                 }
             }
-            .onChange(of: exportViewModel.showShareSheet) { _, newValue in
-                if newValue && showExportSheet {
-                    pendingShareSheet = true
-                    showExportSheet = false
-                }
-            }
-            .onChange(of: showExportSheet) { _, newValue in
-                if !newValue && pendingShareSheet {
-                    Task {
-                        try? await Task.sleep(nanoseconds: 300_000_000)
-                        await MainActor.run {
-                            pendingShareSheet = false
-                            exportViewModel.showShareSheet = true
-                        }
-                    }
-                }
-            }
-            .sheet(isPresented: $exportViewModel.showShareSheet) {
-                if let videoURL = exportViewModel.exportedVideoURL {
+            .sheet(item: Binding(
+                get: { exportViewModel.completedExport },
+                set: { exportViewModel.completedExport = $0 }
+            )) { completion in
+                NavigationStack {
                     ExportCompleteSheet(
-                        videoURL: videoURL,
+                        videoURL: completion.videoURL,
                         previewImage: exportViewModel.exportPreviewImage,
-                        albumName: photoStore.targetAlbum,
                         exportViewModel: exportViewModel,
-                        onDismiss: { exportViewModel.showShareSheet = false }
+                        onDismiss: {
+                            exportViewModel.completedExport = nil
+                            exportViewModel.exportedVideoURL = nil
+                            exportViewModel.exportPreviewImage = nil
+                        }
                     )
                 }
+                #if canImport(UIKit)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                #else
+                .pocketPicModalPresentation(.exportComplete)
+                #endif
             }
             #if os(macOS)
             .sheet(item: $showEyeDetectionPhoto) { photo in
@@ -1380,6 +1391,14 @@ private struct GalleryOverlaysModifier: ViewModifier {
             } message: {
                 Text("This will permanently remove the photo from your library.")
             }
+    }
+
+    private func presentExportCompletionIfNeeded(exportSheetVisible: Bool) {
+        guard !exportSheetVisible,
+              let url = exportViewModel.exportedVideoURL,
+              !exportViewModel.isExporting,
+              exportViewModel.completedExport == nil else { return }
+        exportViewModel.completedExport = ExportCompletion(videoURL: url)
     }
 }
 

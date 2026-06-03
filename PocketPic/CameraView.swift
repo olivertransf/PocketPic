@@ -997,7 +997,7 @@ class CameraContainerView: UIView {
         // When the session starts running we know the connection is live — safe
         // to set up the rotation coordinator and apply initial orientation.
         sessionRunningObserver = NotificationCenter.default.addObserver(
-            forName: .AVCaptureSessionDidStartRunning,
+            forName: AVCaptureSession.didStartRunningNotification,
             object: cameraController.captureSession,
             queue: .main
         ) { [weak self] _ in

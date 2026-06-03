@@ -136,7 +136,7 @@ enum EyeDetectionService {
 
 #if canImport(UIKit)
 private extension CGImagePropertyOrientation {
-    init(_ orientation: UIImage.Orientation) {
+    nonisolated init(_ orientation: UIImage.Orientation) {
         switch orientation {
         case .up: self = .up
         case .down: self = .down
