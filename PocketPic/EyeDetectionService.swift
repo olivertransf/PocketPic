@@ -39,7 +39,9 @@ enum EyeDetectionService {
     
     nonisolated static func detectEyes(in image: PlatformImage) throws -> EyeLocations {
         let (cgImage, orientation) = try makeCGImageAndOrientation(from: image)
-        let (imageWidth, imageHeight) = imageDimensions(for: cgImage, orientation: orientation)
+        let pixelSize = image.pixelSize
+        let imageWidth = pixelSize.width
+        let imageHeight = pixelSize.height
         
         let request = VNDetectFaceLandmarksRequest()
         let handler = VNImageRequestHandler(cgImage: cgImage, orientation: orientation, options: [:])
@@ -70,19 +72,8 @@ enum EyeDetectionService {
         return EyeLocations(
             leftEye: leftEyePoint,
             rightEye: rightEyePoint,
-            imageSize: CGSize(width: imageWidth, height: imageHeight)
+            imageSize: pixelSize
         )
-    }
-    
-    nonisolated private static func imageDimensions(for cgImage: CGImage, orientation: CGImagePropertyOrientation) -> (CGFloat, CGFloat) {
-        let w = CGFloat(cgImage.width)
-        let h = CGFloat(cgImage.height)
-        switch orientation {
-        case .left, .right, .leftMirrored, .rightMirrored:
-            return (h, w)
-        default:
-            return (w, h)
-        }
     }
     
     nonisolated private static func makeCGImageAndOrientation(from image: PlatformImage) throws -> (CGImage, CGImagePropertyOrientation) {

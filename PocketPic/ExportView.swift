@@ -172,11 +172,12 @@ struct ExportView: View {
                         if exportViewModel.isExporting {
                             VStack(spacing: 16) {
                                 ProgressView(value: exportViewModel.exportProgress) {
-                                    HStack {
-                                        ProgressView()
-                                            .progressViewStyle(.circular)
-                                        Text("Creating Video...")
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Creating Video…")
                                             .font(.headline)
+                                        Text(exportViewModel.exportStatus.isEmpty ? "Starting export…" : exportViewModel.exportStatus)
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
                                     }
                                 }
                                 .progressViewStyle(.linear)
@@ -186,6 +187,8 @@ struct ExportView: View {
                                     .font(.subheadline)
                                     .fontWeight(.medium)
                                     .foregroundColor(.secondary)
+                                    .monospacedDigit()
+                                    .contentTransition(.numericText())
                             }
                             .padding(24)
                             .frame(maxWidth: .infinity)
@@ -239,15 +242,13 @@ struct ExportView: View {
             }
             .sheet(isPresented: $exportViewModel.showShareSheet) {
                 if let videoURL = exportViewModel.exportedVideoURL {
-                    #if os(macOS)
                     ExportCompleteSheet(
                         videoURL: videoURL,
+                        previewImage: exportViewModel.exportPreviewImage,
+                        albumName: photoStore.targetAlbum,
                         exportViewModel: exportViewModel,
                         onDismiss: { exportViewModel.showShareSheet = false }
                     )
-                    #else
-                    ShareSheet(items: [videoURL])
-                    #endif
                 }
             }
         }

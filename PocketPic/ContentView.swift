@@ -9,11 +9,80 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var photoStore: PhotoStore
-    #if !os(macOS) && !targetEnvironment(macCatalyst)
-    @State private var showCamera = false
-    #endif
+
+    var body: some View {
+        #if canImport(UIKit) && !os(macOS) && !targetEnvironment(macCatalyst)
+        IOSRootView()
+            .environmentObject(photoStore)
+        #else
+        MacRootView()
+            .environmentObject(photoStore)
+        #endif
+    }
+}
+
+#if canImport(UIKit) && !os(macOS) && !targetEnvironment(macCatalyst)
+private struct IOSRootView: View {
+    @EnvironmentObject private var photoStore: PhotoStore
     @State private var selectedTab = 0
-    
+    @State private var showCamera = false
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            GalleryView()
+                .environment(\.requestCamera, $showCamera)
+                .tabItem {
+                    Label("Photos", systemImage: "photo.on.rectangle.angled")
+                }
+                .tag(0)
+
+            CameraPlaceholderView()
+                .onAppear {
+                    if selectedTab == 1 {
+                        showCamera = true
+                    }
+                }
+                .tabItem {
+                    Label("Camera", systemImage: "camera.fill")
+                }
+                .tag(1)
+
+            SettingsView()
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .tag(2)
+        }
+        .tint(Color.appAccent)
+        .onChange(of: selectedTab) { _, newValue in
+            if newValue == 1 {
+                showCamera = true
+            }
+        }
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraView(onDismiss: {
+                showCamera = false
+                selectedTab = 0
+            })
+            .environmentObject(photoStore)
+        }
+    }
+}
+
+private struct CameraPlaceholderView: View {
+    var body: some View {
+        Color.clear
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.systemGroupedBackground)
+    }
+}
+#endif
+
+#if os(macOS) || targetEnvironment(macCatalyst)
+private struct MacRootView: View {
+    @EnvironmentObject private var photoStore: PhotoStore
+    @State private var selectedTab = 0
+
     var body: some View {
         TabView(selection: $selectedTab) {
             GalleryView()
@@ -22,28 +91,17 @@ struct ContentView: View {
                 }
                 .tag(0)
                 .environmentObject(photoStore)
-            
-            Group {
-                #if os(macOS) || targetEnvironment(macCatalyst)
-                CameraView(onDismiss: {
-                    selectedTab = 0
-                })
-                .environmentObject(photoStore)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                #else
-                CameraPlaceholderView()
-                    .onAppear {
-                        if selectedTab == 1 {
-                            showCamera = true
-                        }
-                    }
-                #endif
-            }
+
+            CameraView(onDismiss: {
+                selectedTab = 0
+            })
+            .environmentObject(photoStore)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .tabItem {
                 Label("Camera", systemImage: "camera.fill")
             }
             .tag(1)
-            
+
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gear")
@@ -52,67 +110,11 @@ struct ContentView: View {
                 .environmentObject(photoStore)
         }
         .tint(Color.appAccent)
-        .preferredColorScheme(nil)
-        #if !os(macOS) && !targetEnvironment(macCatalyst)
-        .onChange(of: selectedTab) { oldValue, newValue in
-            if newValue == 1 && oldValue != 1 {
-                showCamera = true
-            }
-        }
-        #endif
-        #if canImport(UIKit) && !os(macOS) && !targetEnvironment(macCatalyst)
-        .fullScreenCover(isPresented: $showCamera) {
-            CameraView(onDismiss: {
-                showCamera = false
-                selectedTab = 0
-            })
-            .environmentObject(photoStore)
-        }
-        #elseif canImport(AppKit) && !os(macOS) && !targetEnvironment(macCatalyst)
-        .sheet(isPresented: $showCamera) {
-            CameraView(onDismiss: {
-                showCamera = false
-                selectedTab = 0
-            })
-            .environmentObject(photoStore)
-            .frame(minWidth: 800, minHeight: 600)
-        }
-        #endif
     }
 }
-
-struct CameraPlaceholderView: View {
-    var body: some View {
-        VStack(spacing: 28) {
-            ZStack {
-                Circle()
-                    .fill(Color.appAccent.opacity(0.06))
-                    .frame(width: 160, height: 160)
-                Circle()
-                    .fill(Color.appAccent.opacity(0.11))
-                    .frame(width: 112, height: 112)
-                Image(systemName: "camera.aperture")
-                    .font(.system(size: 46, weight: .light))
-                    .foregroundStyle(Color.appAccent)
-            }
-            VStack(spacing: 10) {
-                Text("Ready to Capture")
-                    .font(.title3.weight(.bold))
-                Text("Tap the Camera tab to take your next photo.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(2)
-            }
-        }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.systemGroupedBackground.ignoresSafeArea())
-    }
-}
+#endif
 
 #Preview {
     ContentView()
         .environmentObject(PhotoStore())
 }
-

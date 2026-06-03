@@ -20,21 +20,21 @@ import UIKit
 #endif
 
 private enum ThumbnailDecode {
-    static func downsampleImage(at url: URL, maxPixelDimension: CGFloat) -> PlatformImage? {
-    let options: [CFString: Any] = [
-        kCGImageSourceCreateThumbnailFromImageAlways: true,
-        kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceThumbnailMaxPixelSize: max(64, maxPixelDimension) as NSNumber
-    ]
-    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-          let cgImage = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else { return nil }
-    #if canImport(UIKit)
-    return UIImage(cgImage: cgImage)
-    #elseif canImport(AppKit)
-    return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-    #else
-    return nil
-    #endif
+    nonisolated static func downsampleImage(at url: URL, maxPixelDimension: CGFloat) -> PlatformImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(64, maxPixelDimension) as NSNumber
+        ]
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else { return nil }
+        #if canImport(UIKit)
+        return UIImage(cgImage: cgImage)
+        #elseif canImport(AppKit)
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        #else
+        return nil
+        #endif
     }
 }
 
@@ -235,6 +235,10 @@ class PhotoStore: ObservableObject {
         saveMetadata()
     }
     
+    private func clearThumbnailCache() {
+        thumbnailCache.removeAllObjects()
+    }
+
     private func setupMemoryWarningObserver() {
         #if canImport(UIKit)
         NotificationCenter.default.addObserver(
@@ -242,7 +246,9 @@ class PhotoStore: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.thumbnailCache.removeAllObjects()
+            Task { @MainActor [weak self] in
+                self?.clearThumbnailCache()
+            }
         }
         #elseif canImport(AppKit)
         // On macOS there is no memory warning API; clear the cache when the
@@ -252,7 +258,9 @@ class PhotoStore: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.thumbnailCache.removeAllObjects()
+            Task { @MainActor [weak self] in
+                self?.clearThumbnailCache()
+            }
         }
         #endif
     }

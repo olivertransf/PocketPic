@@ -144,7 +144,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
             .tint(Color.appAccent)
             .onAppear {
                 selectedAlbum = photoStore.targetAlbum
@@ -423,38 +423,21 @@ struct AlbumPickerView: View {
             }
             .onAppear { albums = availableAlbums }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
+        .pocketPicModalPresentation(.albumPicker)
         #elseif canImport(AppKit)
         NavigationStack {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("Select Album")
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    Button("Cancel") { isPresented = false }
-                        .keyboardShortcut(.escape)
+            List {
+                Button {
+                    newAlbumName = ""
+                    showNewAlbumAlert = true
+                } label: {
+                    Label("New Album", systemImage: "plus.circle.fill")
+                        .foregroundStyle(Color.appAccent)
+                        .fontWeight(.medium)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .padding(.bottom, 12)
+                .buttonStyle(.plain)
 
-                Divider()
-
-                List {
-                    Button {
-                        newAlbumName = ""
-                        showNewAlbumAlert = true
-                    } label: {
-                        Label("New Album", systemImage: "plus.circle.fill")
-                            .foregroundStyle(Color.appAccent)
-                            .fontWeight(.medium)
-                    }
-                    .buttonStyle(.plain)
-
-                    Divider()
-
+                Section("My Albums") {
                     ForEach(albums, id: \.self) { album in
                         HStack {
                             Image(systemName: "photo.on.rectangle")
@@ -476,9 +459,14 @@ struct AlbumPickerView: View {
                         }
                     }
                 }
-                .listStyle(.plain)
             }
-            .frame(minWidth: 320, minHeight: 420)
+            .navigationTitle("Select Album")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { isPresented = false }
+                        .keyboardShortcut(.escape)
+                }
+            }
             .alert("New Album", isPresented: $showNewAlbumAlert) {
                 TextField("Album Name", text: $newAlbumName)
                 Button("Cancel", role: .cancel) {}
@@ -488,6 +476,7 @@ struct AlbumPickerView: View {
             }
             .onAppear { albums = availableAlbums }
         }
+        .pocketPicModalPresentation(.albumPicker)
         #endif
     }
 

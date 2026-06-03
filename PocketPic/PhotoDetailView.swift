@@ -20,52 +20,103 @@ struct PhotoDetailView: View {
     @State private var isLoading = true
     @State private var showDeleteConfirm = false
 
-    // Zoom / pan state
     @State private var scale: CGFloat = 1
     @State private var baseScale: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var baseOffset: CGSize = .zero
 
     var body: some View {
+        detailRoot
+            .task {
+                isLoading = true
+                image = await photoStore.loadImageAsync(for: photo)
+                isLoading = false
+            }
+            .confirmationDialog(
+                "Delete Photo",
+                isPresented: $showDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    photoStore.deletePhoto(photo)
+                    dismiss()
+                }
+            } message: {
+                Text("This will permanently remove the photo from your library.")
+            }
+    }
+
+    @ViewBuilder
+    private var detailRoot: some View {
+        #if canImport(UIKit)
+        NavigationStack {
+            detailCanvas
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbarColorScheme(.dark, for: .navigationBar)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", systemImage: "xmark") {
+                            dismiss()
+                        }
+                    }
+                    ToolbarItem(placement: .principal) {
+                        Text(photo.date, format: .dateTime.year().month(.abbreviated).day())
+                            .font(.subheadline.weight(.medium))
+                    }
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Delete", systemImage: "trash", role: .destructive) {
+                            showDeleteConfirm = true
+                        }
+                    }
+                }
+        }
+        .statusBarHidden()
+        #else
+        NavigationStack {
+            detailCanvas
+                .toolbarBackground(.visible, for: .windowToolbar)
+                .toolbarBackground(Color.black.opacity(0.85), for: .windowToolbar)
+                .toolbarColorScheme(.dark, for: .windowToolbar)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", systemImage: "xmark") {
+                            dismiss()
+                        }
+                    }
+                    ToolbarItem(placement: .principal) {
+                        Text(photo.date, format: .dateTime.year().month(.abbreviated).day())
+                            .font(.subheadline.weight(.medium))
+                    }
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Delete", systemImage: "trash", role: .destructive) {
+                            showDeleteConfirm = true
+                        }
+                    }
+                }
+        }
+        .pocketPicModalPresentation(.photoDetail)
+        #endif
+    }
+
+    private var detailCanvas: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
             if isLoading {
                 ProgressView()
                     .tint(.white)
-                    .scaleEffect(1.3)
             } else if let img = image {
                 photoContent(img)
             } else {
-                Label("Could not load photo", systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.secondary)
+                ContentUnavailableView(
+                    "Could Not Load Photo",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .foregroundStyle(.white)
             }
-
-            overlayControls
-        }
-        #if canImport(UIKit)
-        .statusBarHidden()
-        #endif
-        .task {
-            isLoading = true
-            image = await photoStore.loadImageAsync(for: photo)
-            isLoading = false
-        }
-        .confirmationDialog(
-            "Delete Photo",
-            isPresented: $showDeleteConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) {
-                photoStore.deletePhoto(photo)
-                dismiss()
-            }
-        } message: {
-            Text("This will permanently remove the photo from your library.")
         }
     }
-
-    // MARK: - Photo content with pinch + pan
 
     @ViewBuilder
     private func photoContent(_ img: PlatformImage) -> some View {
@@ -113,47 +164,6 @@ struct PhotoDetailView: View {
                     if scale > 1 { resetZoom() } else { scale = 3; baseScale = 3 }
                 }
             }
-    }
-
-    // MARK: - Overlay: close + date + delete
-
-    private var overlayControls: some View {
-        VStack(spacing: 0) {
-            // Top bar
-            HStack {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
-                        .background(.black.opacity(0.45), in: Circle())
-                }
-
-                Spacer()
-
-                Text(photo.date, format: .dateTime.year().month(.abbreviated).day())
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.9))
-
-                Spacer()
-
-                Button {
-                    showDeleteConfirm = true
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.white)
-                        .frame(width: 36, height: 36)
-                        .background(.black.opacity(0.45), in: Circle())
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-
-            Spacer()
-        }
     }
 
     private func resetZoom() {

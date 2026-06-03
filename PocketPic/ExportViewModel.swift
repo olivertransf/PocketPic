@@ -8,27 +8,39 @@
 import SwiftUI
 import AVFoundation
 import Combine
+import Photos
 
 #if canImport(UIKit)
 import UIKit
-import Photos
 #elseif canImport(AppKit)
 import AppKit
 import PhotosUI
 #endif
 
+private enum ExportProgressWeight {
+    static let loading: Double = 0.12
+    static let encoding: Double = 0.86
+    static let finishing: Double = 0.02
+}
+
 @MainActor
 class ExportViewModel: ObservableObject {
     @Published var isExporting = false
-    @Published var isPreparing = false
     @Published var exportProgress: Double = 0.0
+    @Published var exportStatus: String = ""
     @Published var showShareSheet = false
     @Published var exportedVideoURL: URL?
+    @Published var exportPreviewImage: PlatformImage?
     @Published var errorMessage: String?
     @Published var selectedFPS: Int = 10
     @Published var alignEyes: Bool = true
     
     let availableFPSOptions = [5, 10, 15, 24, 30, 60]
+
+    private func setExportProgress(_ value: Double, status: String) {
+        exportProgress = min(max(value, 0), 1)
+        exportStatus = status
+    }
     
     func exportVideo(photos: [Photo], photoStore: PhotoStore) async {
         guard !photos.isEmpty else {
@@ -37,66 +49,85 @@ class ExportViewModel: ObservableObject {
         }
 
         isExporting = true
-        isPreparing = true
-        exportProgress = 0.0
+        setExportProgress(0, status: "Starting export…")
 
-        // Yield so SwiftUI can render the overlay before we block the main thread loading images
         await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms — enough for a frame to render
 
-        // Capture all main-actor state before leaving the main thread
         let fps = selectedFPS
         let shouldAlignEyes = alignEyes
         let useNative = photoStore.useNativeResolution
         let sortedPhotos = photos.sorted { $0.date < $1.date }
+        let photoCount = sortedPhotos.count
 
         var loadedImages: [PlatformImage] = []
-        for photo in sortedPhotos {
+        loadedImages.reserveCapacity(photoCount)
+
+        for (index, photo) in sortedPhotos.enumerated() {
+            setExportProgress(
+                ExportProgressWeight.loading * (Double(index) / Double(photoCount)),
+                status: "Loading photo \(index + 1) of \(photoCount)"
+            )
+            await Task.yield()
+
             if let img = await photoStore.loadImageAsync(for: photo) {
                 loadedImages.append(img)
             }
         }
 
-        isPreparing = false
-
         guard !loadedImages.isEmpty else {
             errorMessage = "Could not load any photos"
             isExporting = false
+            exportStatus = ""
             return
         }
 
         do {
-            // All heavy encoding work runs off the main thread
-            let videoURL = try await Task.detached(priority: .userInitiated) { [weak self] in
+            let loadingWeight = ExportProgressWeight.loading
+            let encodingWeight = ExportProgressWeight.encoding
+
+            let tempURL = try await Task.detached(priority: .userInitiated) {
                 try await ExportViewModel.encodeVideo(
                     images: loadedImages,
                     fps: fps,
                     alignEyes: shouldAlignEyes,
                     useNativeResolution: useNative,
-                    onProgress: { progress in
+                    onProgress: { encodeProgress, status in
+                        let overall = loadingWeight + (encodeProgress * encodingWeight)
                         Task { @MainActor [weak self] in
-                            self?.exportProgress = progress
+                            self?.setExportProgress(overall, status: status)
                         }
                     }
                 )
             }.value
 
+            setExportProgress(loadingWeight + encodingWeight, status: "Saving export…")
+            await Task.yield()
+
+            let videoURL = try await Task.detached(priority: .utility) {
+                try ExportViewModel.finalizeExport(at: tempURL)
+            }.value
+
+            let preview = await Task.detached(priority: .utility) {
+                loadedImages.first?.normalizedUpOrientation()
+            }.value
+            exportPreviewImage = preview
             exportedVideoURL = videoURL
+            setExportProgress(1, status: "Export complete")
             isExporting = false
             showShareSheet = true
         } catch {
             errorMessage = "Failed to create video: \(error.localizedDescription)"
             isExporting = false
-            isPreparing = false
+            exportStatus = ""
         }
     }
 
-    private static func encodeVideo(
+    nonisolated private static func encodeVideo(
         images: [PlatformImage],
         fps: Int,
         alignEyes: Bool,
         useNativeResolution: Bool,
-        onProgress: @escaping (Double) -> Void
+        onProgress: @escaping (Double, String) -> Void
     ) async throws -> URL {
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("PocketPic_\(Date().timeIntervalSince1970).mp4")
@@ -176,10 +207,19 @@ class ExportViewModel: ObservableObject {
         }
         videoWriter.startSession(atSourceTime: .zero)
 
+        let imageCount = images.count
+        var normalizedImages: [PlatformImage] = []
+        normalizedImages.reserveCapacity(imageCount)
+        for (index, image) in images.enumerated() {
+            normalizedImages.append(image.normalizedUpOrientation())
+            let normalizeProgress = 0.08 * Double(index + 1) / Double(imageCount)
+            onProgress(normalizeProgress, "Preparing frame \(index + 1) of \(imageCount)")
+        }
+
         var frameCount: Int64 = 0
         var referenceEyes: (left: CGPoint, right: CGPoint)?
 
-        for (index, image) in images.enumerated() {
+        for (index, image) in normalizedImages.enumerated() {
             autoreleasepool {
                 let presentationTime = CMTime(value: frameCount, timescale: fpsScale)
                 while !videoWriterInput.isReadyForMoreMediaData {
@@ -203,22 +243,38 @@ class ExportViewModel: ObservableObject {
                 if let pb = result {
                     adaptor.append(pb, withPresentationTime: presentationTime)
                     frameCount += 1
-                    onProgress(Double(index + 1) / Double(images.count))
+                    let encodeProgress = 0.08 + (0.89 * Double(index + 1) / Double(imageCount))
+                    onProgress(encodeProgress, "Processing frame \(index + 1) of \(imageCount)")
                 }
             }
         }
 
         videoWriterInput.markAsFinished()
+        onProgress(0.98, "Writing video…")
         await videoWriter.finishWriting()
 
         guard videoWriter.status == .completed else {
             throw NSError(domain: "PocketPic", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video writing failed"])
         }
 
+        onProgress(1.0, "Finishing up…")
         return outputURL
     }
+
+    nonisolated private static func finalizeExport(at tempURL: URL) throws -> URL {
+        let exportsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Exports", isDirectory: true)
+        try FileManager.default.createDirectory(at: exportsDir, withIntermediateDirectories: true)
+
+        let destURL = exportsDir.appendingPathComponent(tempURL.lastPathComponent)
+        if FileManager.default.fileExists(atPath: destURL.path) {
+            try FileManager.default.removeItem(at: destURL)
+        }
+        try FileManager.default.moveItem(at: tempURL, to: destURL)
+        return destURL
+    }
     
-    private static func makePixelBuffer(from image: PlatformImage, size: CGSize) -> CVPixelBuffer? {
+    nonisolated private static func makePixelBuffer(from image: PlatformImage, size: CGSize) -> CVPixelBuffer? {
         let attrs = [
             kCVPixelBufferCGImageCompatibilityKey: kCFBooleanTrue!,
             kCVPixelBufferCGBitmapContextCompatibilityKey: kCFBooleanTrue!
@@ -265,12 +321,10 @@ class ExportViewModel: ObservableObject {
         
         var drawRect: CGRect
         if imageAspect > videoAspect {
-            // Image is wider - fit to height
             let scaledWidth = size.height * imageAspect
             let xOffset = (size.width - scaledWidth) / 2
             drawRect = CGRect(x: xOffset, y: 0, width: scaledWidth, height: size.height)
         } else {
-            // Image is taller - fit to width
             let scaledHeight = size.width / imageAspect
             let yOffset = (size.height - scaledHeight) / 2
             drawRect = CGRect(x: 0, y: yOffset, width: size.width, height: scaledHeight)
@@ -291,43 +345,45 @@ class ExportViewModel: ObservableObject {
         return buffer
     }
     
-    private static func makeAlignedPixelBuffer(
+    nonisolated private static func aspectFitDrawRect(imageSize: CGSize, videoSize: CGSize) -> CGRect {
+        let imageAspect = imageSize.width / imageSize.height
+        let videoAspect = videoSize.width / videoSize.height
+        if imageAspect > videoAspect {
+            let scaledWidth = videoSize.height * imageAspect
+            return CGRect(x: (videoSize.width - scaledWidth) / 2, y: 0, width: scaledWidth, height: videoSize.height)
+        }
+        let scaledHeight = videoSize.width / imageAspect
+        return CGRect(x: 0, y: (videoSize.height - scaledHeight) / 2, width: videoSize.width, height: scaledHeight)
+    }
+
+    nonisolated private static func eyeInVideoSpace(_ point: CGPoint, imageSize: CGSize, drawRect: CGRect) -> CGPoint {
+        CGPoint(
+            x: drawRect.origin.x + (point.x / imageSize.width) * drawRect.width,
+            y: drawRect.origin.y + (1 - point.y / imageSize.height) * drawRect.height
+        )
+    }
+
+    nonisolated private static func makeAlignedPixelBuffer(
         from image: PlatformImage,
         size: CGSize,
         referenceEyes: (left: CGPoint, right: CGPoint)?,
         isReferenceFrame: Bool
     ) -> (CVPixelBuffer?, (left: CGPoint, right: CGPoint)?) {
-        let imageSize = image.size
-        guard imageSize.width > 0, imageSize.height > 0 else {
-            return (makePixelBuffer(from: image, size: size), nil)
-        }
-
         let eyesResult = try? EyeDetectionService.detectEyes(in: image)
         guard let eyes = eyesResult else {
             return (makePixelBuffer(from: image, size: size), nil)
         }
 
-        let imageAspect = imageSize.width / imageSize.height
-        let videoAspect = size.width / size.height
-
-        var drawRect: CGRect
-        if imageAspect > videoAspect {
-            let scaledWidth = size.height * imageAspect
-            drawRect = CGRect(x: (size.width - scaledWidth) / 2, y: 0, width: scaledWidth, height: size.height)
-        } else {
-            let scaledHeight = size.width / imageAspect
-            drawRect = CGRect(x: 0, y: (size.height - scaledHeight) / 2, width: size.width, height: scaledHeight)
+        let imagePixelSize = eyes.imageSize
+        guard imagePixelSize.width > 0, imagePixelSize.height > 0 else {
+            return (makePixelBuffer(from: image, size: size), nil)
         }
 
+        let drawRect = aspectFitDrawRect(imageSize: imagePixelSize, videoSize: size)
+
         if isReferenceFrame || referenceEyes == nil {
-            let refLeft = CGPoint(
-                x: drawRect.origin.x + (eyes.leftEye.x / imageSize.width) * drawRect.width,
-                y: drawRect.origin.y + (1 - eyes.leftEye.y / imageSize.height) * drawRect.height
-            )
-            let refRight = CGPoint(
-                x: drawRect.origin.x + (eyes.rightEye.x / imageSize.width) * drawRect.width,
-                y: drawRect.origin.y + (1 - eyes.rightEye.y / imageSize.height) * drawRect.height
-            )
+            let refLeft = eyeInVideoSpace(eyes.leftEye, imageSize: imagePixelSize, drawRect: drawRect)
+            let refRight = eyeInVideoSpace(eyes.rightEye, imageSize: imagePixelSize, drawRect: drawRect)
             return (makePixelBuffer(from: image, size: size), (left: refLeft, right: refRight))
         }
 
@@ -335,32 +391,52 @@ class ExportViewModel: ObservableObject {
             return (makePixelBuffer(from: image, size: size), nil)
         }
 
-        let srcLeft = CGPoint(x: eyes.leftEye.x, y: imageSize.height - eyes.leftEye.y)
-        let srcRight = CGPoint(x: eyes.rightEye.x, y: imageSize.height - eyes.rightEye.y)
+        var srcLeft = eyeInVideoSpace(eyes.leftEye, imageSize: imagePixelSize, drawRect: drawRect)
+        var srcRight = eyeInVideoSpace(eyes.rightEye, imageSize: imagePixelSize, drawRect: drawRect)
 
-        let srcDelta = CGPoint(x: srcRight.x - srcLeft.x, y: srcRight.y - srcLeft.y)
         let refDelta = CGPoint(x: ref.right.x - ref.left.x, y: ref.right.y - ref.left.y)
+        var srcDelta = CGPoint(x: srcRight.x - srcLeft.x, y: srcRight.y - srcLeft.y)
+
+        if srcDelta.x * refDelta.x + srcDelta.y * refDelta.y < 0 {
+            swap(&srcLeft, &srcRight)
+            srcDelta = CGPoint(x: srcRight.x - srcLeft.x, y: srcRight.y - srcLeft.y)
+        }
 
         let srcDist = hypot(srcDelta.x, srcDelta.y)
         let refDist = hypot(refDelta.x, refDelta.y)
-        guard srcDist > 0.1 else {
+        guard srcDist > 0.1, refDist > 0.1 else {
             return (makePixelBuffer(from: image, size: size), nil)
         }
 
+        var theta = atan2(refDelta.y, refDelta.x) - atan2(srcDelta.y, srcDelta.x)
+        while theta > .pi { theta -= 2 * .pi }
+        while theta < -.pi { theta += 2 * .pi }
+
         let scale = refDist / srcDist
-        let theta = atan2(refDelta.y, refDelta.x) - atan2(srcDelta.y, srcDelta.x)
-        let transform = CGAffineTransform(translationX: -srcLeft.x, y: -srcLeft.y)
+        let alignTransform = CGAffineTransform(translationX: -srcLeft.x, y: -srcLeft.y)
             .concatenating(CGAffineTransform(rotationAngle: theta))
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
             .concatenating(CGAffineTransform(translationX: ref.left.x, y: ref.left.y))
 
-        return (makePixelBufferWithTransform(from: image, size: size, imageSize: imageSize, transform: transform), nil)
+        let fitScale = drawRect.width / imagePixelSize.width
+        let fitTransform = CGAffineTransform(translationX: drawRect.origin.x, y: drawRect.origin.y)
+            .concatenating(CGAffineTransform(scaleX: fitScale, y: fitScale))
+
+        return (
+            makePixelBufferWithTransform(
+                from: image,
+                size: size,
+                imagePixelSize: imagePixelSize,
+                transform: alignTransform.concatenating(fitTransform)
+            ),
+            nil
+        )
     }
 
-    private static func makePixelBufferWithTransform(
+    nonisolated private static func makePixelBufferWithTransform(
         from image: PlatformImage,
         size: CGSize,
-        imageSize: CGSize,
+        imagePixelSize: CGSize,
         transform: CGAffineTransform
     ) -> CVPixelBuffer? {
         let attrs = [
@@ -410,12 +486,11 @@ class ExportViewModel: ObservableObject {
         
         #if canImport(UIKit)
         if let cgImage = image.cgImage {
-            context.draw(cgImage, in: CGRect(origin: .zero, size: imageSize))
+            context.draw(cgImage, in: CGRect(origin: .zero, size: imagePixelSize))
         }
         #elseif canImport(AppKit)
-        var proposedRect = CGRect(origin: .zero, size: imageSize)
-        if let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) {
-            context.draw(cgImage, in: CGRect(origin: .zero, size: imageSize))
+        if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            context.draw(cgImage, in: CGRect(origin: .zero, size: imagePixelSize))
         }
         #endif
         
@@ -459,27 +534,45 @@ class ExportViewModel: ObservableObject {
         #endif
     }
     
-    func saveToPhotos(videoURL: URL) async {
-        #if canImport(UIKit)
+    func saveToPhotos(videoURL: URL, albumName: String) async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        
-        guard status == .authorized else {
+
+        guard status == .authorized || status == .limited else {
             errorMessage = "Photo library access denied"
             return
         }
-        
+
+        guard FileManager.default.isReadableFile(atPath: videoURL.path) else {
+            errorMessage = "Exported video file is no longer available"
+            return
+        }
+
         do {
             try await PHPhotoLibrary.shared().performChanges {
-                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: videoURL)
+                guard let assetRequest = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: videoURL) else {
+                    return
+                }
+
+                let albumFetchOptions = PHFetchOptions()
+                albumFetchOptions.predicate = NSPredicate(format: "title = %@", albumName)
+                let albumFetchResult = PHAssetCollection.fetchAssetCollections(
+                    with: .album,
+                    subtype: .any,
+                    options: albumFetchOptions
+                )
+
+                if let album = albumFetchResult.firstObject,
+                   let albumChangeRequest = PHAssetCollectionChangeRequest(for: album),
+                   let placeholder = assetRequest.placeholderForCreatedAsset {
+                    albumChangeRequest.addAssets([placeholder] as NSArray)
+                } else if let placeholder = assetRequest.placeholderForCreatedAsset {
+                    let albumChangeRequest = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumName)
+                    albumChangeRequest.addAssets([placeholder] as NSArray)
+                }
             }
         } catch {
             errorMessage = "Failed to save to Photos: \(error.localizedDescription)"
         }
-        #elseif canImport(AppKit)
-        // On macOS, we'll just let the user save via the share sheet
-        // Photos library access is more restricted on macOS
-        errorMessage = "Use the share sheet to save to Photos or Files"
-        #endif
     }
 }
 

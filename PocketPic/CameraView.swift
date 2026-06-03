@@ -461,22 +461,11 @@ class CameraController: NSObject, ObservableObject {
     }
     
     func updatePhotoOutputRotationAngle(_ angle: CGFloat) {
-        if let connection = photoOutput.connection(with: .video) {
-            if #available(iOS 17.0, *) {
-                if connection.isVideoRotationAngleSupported(angle) {
-                    connection.videoRotationAngle = angle
-                }
-            }
-        }
+        guard let connection = photoOutput.connection(with: .video),
+              connection.isVideoRotationAngleSupported(angle) else { return }
+        connection.videoRotationAngle = angle
     }
 
-    #if canImport(UIKit)
-    func updatePhotoOutputOrientation(_ orientation: AVCaptureVideoOrientation) {
-        guard let connection = photoOutput.connection(with: .video),
-              connection.isVideoOrientationSupported else { return }
-        connection.videoOrientation = orientation
-    }
-    #endif
     
     // WARNING: Must not call captureSession.startRunning inside begin/commit!
     private func setupCameraSync() {
@@ -985,9 +974,6 @@ class CameraContainerView: UIView {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             self.updateFrame()
-            if #unavailable(iOS 17.0) {
-                self.applyLegacyOrientation()
-            }
             self.setNeedsLayout()
             self.layoutIfNeeded()
         }
@@ -1026,21 +1012,9 @@ class CameraContainerView: UIView {
 
     /// Called on main thread once the capture session is actually running.
     private func onSessionStartedRunning() {
-        setupCameraOrientation()
-        if #available(iOS 17.0, *) {
-            // RotationCoordinator handles it via KVO
-        } else {
-            applyLegacyOrientation()
-        }
+        setupRotationCoordinator()
     }
 
-    private func setupCameraOrientation() {
-        if #available(iOS 17.0, *) {
-            setupRotationCoordinator()
-        }
-    }
-
-    @available(iOS 17.0, *)
     private func setupRotationCoordinator() {
         _rotationObservation = nil
         _rotationCoordinator = nil
@@ -1060,27 +1034,11 @@ class CameraContainerView: UIView {
         }
     }
 
-    @available(iOS 17.0, *)
     private func applyRotation(from coordinator: AVCaptureDevice.RotationCoordinator) {
         previewLayer?.connection?.videoRotationAngle = coordinator.videoRotationAngleForHorizonLevelPreview
         cameraController?.updatePhotoOutputRotationAngle(coordinator.videoRotationAngleForHorizonLevelCapture)
     }
 
-    private func applyLegacyOrientation() {
-        guard #unavailable(iOS 17.0) else { return }
-        let deviceOrientation = UIDevice.current.orientation
-        let videoOrientation: AVCaptureVideoOrientation
-        switch deviceOrientation {
-        case .landscapeLeft:        videoOrientation = .landscapeRight
-        case .landscapeRight:       videoOrientation = .landscapeLeft
-        case .portraitUpsideDown:   videoOrientation = .portraitUpsideDown
-        default:                    videoOrientation = .portrait
-        }
-        previewLayer?.connection?.videoOrientation = videoOrientation
-        cameraController?.updatePhotoOutputOrientation(videoOrientation)
-    }
-    
-    
     private func setupUI() {
         backgroundColor = .black
         
@@ -1342,13 +1300,7 @@ class CameraContainerView: UIView {
         let currentIndex = cameras.firstIndex(where: { $0.uniqueID == current.uniqueID }) ?? 0
         let nextIndex = (currentIndex + 1) % cameras.count
         cameraController.switchCamera(to: cameras[nextIndex]) { [weak self] in
-            // Camera switch has committed — safe to re-bind the rotation coordinator
-            self?.setupCameraOrientation()
-            if #available(iOS 17.0, *) {
-                // RotationCoordinator KVO takes over
-            } else {
-                self?.applyLegacyOrientation()
-            }
+            self?.setupRotationCoordinator()
         }
     }
 
