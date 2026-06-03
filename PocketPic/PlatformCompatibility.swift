@@ -15,7 +15,6 @@ typealias PlatformImage = UIImage
 extension UIImage {
     /// Renders the image upright so pixel data matches `size` and Vision/drawing agree.
     nonisolated func normalizedUpOrientation() -> UIImage {
-        guard imageOrientation != .up else { return self }
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = false
