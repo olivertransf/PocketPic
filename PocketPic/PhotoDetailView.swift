@@ -17,7 +17,6 @@ struct PhotoViewerView: View {
     @EnvironmentObject private var photoStore: PhotoStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var currentIndex = 0
     @State private var isZoomed = false
     @State private var showDeleteConfirm = false
 
@@ -26,8 +25,16 @@ struct PhotoViewerView: View {
     }
 
     private var currentPhoto: Photo? {
-        guard sortedPhotos.indices.contains(currentIndex) else { return nil }
-        return sortedPhotos[currentIndex]
+        guard let selectedPhotoID else { return nil }
+        return sortedPhotos.first { $0.id == selectedPhotoID }
+    }
+
+    private var currentIndex: Int {
+        guard let selectedPhotoID,
+              let index = sortedPhotos.firstIndex(where: { $0.id == selectedPhotoID }) else {
+            return 0
+        }
+        return index
     }
 
     var body: some View {
@@ -39,16 +46,19 @@ struct PhotoViewerView: View {
                     ContentUnavailableView("No Photos", systemImage: "photo")
                         .foregroundStyle(.white)
                 } else {
-                    TabView(selection: $currentIndex) {
-                        ForEach(Array(sortedPhotos.enumerated()), id: \.element.id) { index, photo in
-                            PhotoPageView(photo: photo, isZoomed: $isZoomed)
-                                .tag(index)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 0) {
+                            ForEach(sortedPhotos) { photo in
+                                PhotoPageView(photo: photo, isZoomed: $isZoomed)
+                                    .containerRelativeFrame(.horizontal)
+                                    .id(photo.id)
+                            }
                         }
+                        .scrollTargetLayout()
                     }
-                    #if canImport(UIKit)
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                    #endif
-                    .disabled(isZoomed)
+                    .scrollTargetBehavior(.paging)
+                    .scrollPosition(id: $selectedPhotoID)
+                    .scrollDisabled(isZoomed)
                     .ignoresSafeArea()
                 }
             }
@@ -67,26 +77,30 @@ struct PhotoViewerView: View {
         #if canImport(UIKit)
         .statusBarHidden()
         #endif
-        .onAppear(perform: syncIndexFromSelection)
-        .onChange(of: currentIndex) { _, newIndex in
-            guard sortedPhotos.indices.contains(newIndex) else { return }
-            selectedPhotoID = sortedPhotos[newIndex].id
+        .onAppear(perform: ensureSelection)
+        .onChange(of: selectedPhotoID) { _, _ in
             isZoomed = false
-        }
-        .onChange(of: selectedPhotoID) { _, newID in
-            guard let newID,
-                  let index = sortedPhotos.firstIndex(where: { $0.id == newID }),
-                  index != currentIndex else { return }
-            currentIndex = index
         }
         .onChange(of: photoStore.photos.count) { _, _ in
             guard !sortedPhotos.isEmpty else {
                 dismiss()
                 return
             }
-            currentIndex = min(currentIndex, sortedPhotos.count - 1)
-            selectedPhotoID = sortedPhotos[currentIndex].id
+            if selectedPhotoID == nil || !sortedPhotos.contains(where: { $0.id == selectedPhotoID }) {
+                let index = min(currentIndex, sortedPhotos.count - 1)
+                selectedPhotoID = sortedPhotos[index].id
+            }
         }
+        #if os(macOS)
+        .onKeyPress(.leftArrow) {
+            step(by: -1)
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            step(by: 1)
+            return .handled
+        }
+        #endif
         .confirmationDialog(
             "Delete Photo",
             isPresented: $showDeleteConfirm,
@@ -127,47 +141,22 @@ struct PhotoViewerView: View {
         }
 
         ToolbarItem(placement: .primaryAction) {
-            HStack(spacing: 12) {
-                if sortedPhotos.count > 1 {
-                    Button("Previous", systemImage: "chevron.left") {
-                        step(by: -1)
-                    }
-                    .disabled(currentIndex <= 0)
-                    .help("Previous photo")
-                    #if os(macOS)
-                    .keyboardShortcut(.leftArrow, modifiers: [])
-                    #endif
-
-                    Button("Next", systemImage: "chevron.right") {
-                        step(by: 1)
-                    }
-                    .disabled(currentIndex >= sortedPhotos.count - 1)
-                    .help("Next photo")
-                    #if os(macOS)
-                    .keyboardShortcut(.rightArrow, modifiers: [])
-                    #endif
-                }
-
-                Button("Delete", systemImage: "trash", role: .destructive) {
-                    showDeleteConfirm = true
-                }
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                showDeleteConfirm = true
             }
         }
     }
 
-    private func syncIndexFromSelection() {
-        if let id = selectedPhotoID,
-           let index = sortedPhotos.firstIndex(where: { $0.id == id }) {
-            currentIndex = index
+    private func ensureSelection() {
+        if selectedPhotoID == nil {
+            selectedPhotoID = sortedPhotos.first?.id
         }
     }
 
     private func step(by offset: Int) {
         let next = currentIndex + offset
         guard sortedPhotos.indices.contains(next) else { return }
-        withAnimation(.easeInOut(duration: 0.2)) {
-            currentIndex = next
-        }
+        selectedPhotoID = sortedPhotos[next].id
     }
 }
 
@@ -220,7 +209,7 @@ private struct PhotoPageView: View {
             .scaleEffect(scale)
             .offset(offset)
             .gesture(zoomGesture)
-            .simultaneousGesture(panGesture)
+            .simultaneousGesture(isZoomed ? panGesture : nil)
             .onTapGesture(count: 2) {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                     if scale > 1 {
@@ -255,9 +244,8 @@ private struct PhotoPageView: View {
     }
 
     private var panGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 8)
             .onChanged { value in
-                guard scale > 1 else { return }
                 offset = CGSize(
                     width: baseOffset.width + value.translation.width,
                     height: baseOffset.height + value.translation.height
