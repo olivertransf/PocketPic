@@ -6,6 +6,16 @@ enum PocketPicWindowID {
     static let mainApp = "mainApp"
 }
 
+private enum PocketPicMenuBarLayout {
+    /// Mac built-in cameras are typically 4:3 until the live format is reported.
+    static let defaultPreviewAspectRatio: CGFloat = 4.0 / 3.0
+    static let width: CGFloat = 480
+
+    static func previewHeight(for aspectRatio: CGFloat) -> CGFloat {
+        width / max(aspectRatio, 0.75)
+    }
+}
+
 /// Menu bar accessory windows default to a single Space; this moves the popover to whichever Space is active when shown.
 private final class ActiveSpaceWindowAnchorView: NSView {
     override func viewDidMoveToWindow() {
@@ -136,15 +146,20 @@ struct PocketPicMenuBarPanel: View {
 
     @State private var cameraSessionID = UUID()
     @State private var isCameraActive = false
+    @State private var previewAspectRatio = PocketPicMenuBarLayout.defaultPreviewAspectRatio
+
+    private var previewHeight: CGFloat {
+        PocketPicMenuBarLayout.previewHeight(for: previewAspectRatio)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             Group {
                 if isCameraActive {
-                    CameraView(onDismiss: closePanel)
+                    CameraView(onDismiss: closePanel, compactMenuBarChrome: true)
                         .id(cameraSessionID)
                 } else {
-                    VStack(spacing: 10) {
+                    VStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
                         Text("Starting camera…")
@@ -154,32 +169,47 @@ struct PocketPicMenuBarPanel: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .frame(width: 480, height: 400)
+            .frame(
+                width: PocketPicMenuBarLayout.width,
+                height: previewHeight
+            )
+            .background(Color.black)
+            .onPreferenceChange(CameraPreviewAspectRatioKey.self) { previewAspectRatio = $0 }
 
             Divider()
 
-            HStack {
-                Button("Open PocketPic…") {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: PocketPicWindowID.mainApp)
-                    closePanel()
+            HStack(spacing: 8) {
+                Button {
+                    openMainApp()
+                } label: {
+                    Label("Open PocketPic", systemImage: "macwindow")
                 }
                 .buttonStyle(.link)
 
                 Spacer(minLength: 0)
 
-                Button("Quit") {
-                    NSApplication.shared.terminate(nil)
+                Menu {
+                    Button {
+                        openMainApp()
+                    } label: {
+                        Label("Open PocketPic", systemImage: "macwindow")
+                    }
+
+                    Divider()
+
+                    Button("Quit PocketPic") {
+                        NSApplication.shared.terminate(nil)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
-                .buttonStyle(.link)
+                .menuStyle(.borderlessButton)
+                .help("More")
             }
-            .font(.caption)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(.bar)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
-        .frame(width: 480)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(width: PocketPicMenuBarLayout.width)
         .background {
             ZStack {
                 ActiveSpaceMenuBarWindowConfigurator()
@@ -189,6 +219,12 @@ struct PocketPicMenuBarPanel: View {
                 )
             }
         }
+    }
+
+    private func openMainApp() {
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: PocketPicWindowID.mainApp)
+        closePanel()
     }
 
     private func openCameraSession() {

@@ -27,8 +27,9 @@ struct PocketPicApp: App {
                 .environmentObject(photoStore)
                 .tint(Color.appAccent)
         }
-        .defaultSize(width: 960, height: 720)
+        .defaultSize(width: 1100, height: 760)
         .defaultLaunchBehavior(.suppressed)
+        .windowToolbarStyle(.unified)
         #else
         WindowGroup {
             ContentView()

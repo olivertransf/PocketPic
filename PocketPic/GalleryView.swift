@@ -14,12 +14,6 @@ import UIKit
 import AppKit
 #endif
 
-enum SortOption: String, CaseIterable {
-    case newestFirst = "Newest First"
-    case oldestFirst = "Oldest First"
-    case fileName = "File Name"
-}
-
 struct GalleryView: View {
     @EnvironmentObject var photoStore: PhotoStore
     #if canImport(UIKit)
@@ -27,43 +21,32 @@ struct GalleryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     #endif
     @StateObject private var exportViewModel = ExportViewModel()
-    @State private var sortOption: SortOption = .newestFirst
     @State private var isSelectionMode = false
     @State private var selectedPhotos: Set<Photo.ID> = []
     @State private var showDeleteConfirmation = false
     @State private var showExportSheet = false
     @State private var pendingExportCompletion = false
     @State private var showEyeDetectionPhoto: Photo?
-    @State private var detailPhoto: Photo?
+    @State private var viewerPhotoID: Photo.ID?
     @State private var deleteTargetPhoto: Photo?
     @State private var showSingleDeleteConfirmation = false
-    
-    private var galleryColumns: [GridItem] {
+
+    private var collageRowHeight: CGFloat {
         #if canImport(UIKit)
-        let minimum: CGFloat = horizontalSizeClass == .regular ? 132 : 96
-        let maximum: CGFloat = horizontalSizeClass == .regular ? 200 : 148
+        horizontalSizeClass == .regular ? 168 : 132
         #else
-        let minimum: CGFloat = 110
-        let maximum: CGFloat = 180
+        168
         #endif
-        return [GridItem(.adaptive(minimum: minimum, maximum: maximum), spacing: 2)]
     }
 
     #if canImport(UIKit)
     private var galleryNavigationTitle: String {
-        isSelectionMode ? "\(selectedPhotos.count) Selected" : "Photos"
+        isSelectionMode ? "\(selectedPhotos.count) Selected" : "Library"
     }
     #endif
     
     var sortedPhotos: [Photo] {
-        switch sortOption {
-        case .newestFirst:
-            return photoStore.photos.sorted { $0.date > $1.date }
-        case .oldestFirst:
-            return photoStore.photos.sorted { $0.date < $1.date }
-        case .fileName:
-            return photoStore.photos.sorted { $0.filename < $1.filename }
-        }
+        photoStore.photos.sorted { $0.date > $1.date }
     }
 
     private var currentStreak: Int {
@@ -118,10 +101,18 @@ struct GalleryView: View {
     var body: some View {
         NavigationStack {
             galleryMainContent
-                .background(Color.systemGroupedBackground)
+                .background {
+                    #if os(macOS)
+                    Color(nsColor: .windowBackgroundColor)
+                    #else
+                    Color.systemGroupedBackground
+                    #endif
+                }
                 .navigationTitle(galleryTitle)
+                .pocketPicNavigationSubtitle(gallerySubtitle)
                 #if canImport(UIKit)
                 .navigationBarTitleDisplayMode(isSelectionMode ? .inline : .large)
+                .toolbarBackground(.automatic, for: .navigationBar)
                 #endif
                 .toolbar { galleryToolbar }
                 .modifier(GalleryOverlaysModifier(
@@ -130,7 +121,7 @@ struct GalleryView: View {
                     pendingExportCompletion: $pendingExportCompletion,
                     showSingleDeleteConfirmation: $showSingleDeleteConfirmation,
                     showEyeDetectionPhoto: $showEyeDetectionPhoto,
-                    detailPhoto: $detailPhoto,
+                    viewerPhotoID: $viewerPhotoID,
                     deleteTargetPhoto: $deleteTargetPhoto,
                     exportViewModel: exportViewModel,
                     photoStore: photoStore,
@@ -144,8 +135,22 @@ struct GalleryView: View {
         #if canImport(UIKit)
         galleryNavigationTitle
         #else
-        isSelectionMode ? "\(selectedPhotos.count) Selected" : "Gallery"
+        isSelectionMode ? "\(selectedPhotos.count) Selected" : "Library"
         #endif
+    }
+
+    private var gallerySubtitle: String {
+        if isSelectionMode {
+            return "Choose photos to delete"
+        }
+        var parts = ["\(sortedPhotos.count) photos"]
+        if currentStreak > 0 {
+            parts.append("\(currentStreak)-day streak")
+        }
+        if longestStreak > currentStreak {
+            parts.append("best \(longestStreak)")
+        }
+        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -182,23 +187,30 @@ struct GalleryView: View {
 
     private var galleryPhotoScrollView: some View {
         ScrollView {
-            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                GalleryStatsBanner(
-                    currentStreak: currentStreak,
-                    longestStreak: longestStreak,
-                    totalPhotos: sortedPhotos.count
-                )
+            LazyVStack(alignment: .leading, spacing: 0) {
+                #if canImport(UIKit)
+                if #unavailable(iOS 26.0) {
+                    Text(gallerySubtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, PocketPicDesign.libraryHeaderInset)
+                        .padding(.top, 8)
+                        .padding(.bottom, 6)
+                }
+                #endif
 
-                ForEach(Array(photosByMonth.enumerated()), id: \.offset) { _, group in
+                ForEach(Array(photosByMonth.enumerated()), id: \.offset) { index, group in
                     GalleryMonthSection(
                         monthKey: group.0,
                         monthPhotos: group.1,
-                        columns: galleryColumns,
+                        targetRowHeight: collageRowHeight,
+                        isFirstSection: index == 0,
                         isSelectionMode: isSelectionMode,
                         selectedPhotoIDs: selectedPhotos,
                         onTap: handlePhotoTap,
                         onLongPress: handlePhotoLongPress,
-                        onViewPhoto: { detailPhoto = $0 },
+                        onViewPhoto: { viewerPhotoID = $0.id },
                         onDetectEyes: { showEyeDetectionPhoto = $0 },
                         onDelete: { photo in
                             deleteTargetPhoto = photo
@@ -209,175 +221,122 @@ struct GalleryView: View {
             }
             .pocketPicReadableWidth()
         }
+        #if canImport(UIKit)
+        .scrollContentBackground(.hidden)
+        #endif
     }
 
     @ToolbarContentBuilder
     private var galleryToolbar: some ToolbarContent {
-                #if canImport(UIKit)
-                ToolbarItem(placement: .navigationBarLeading) {
-                    if isSelectionMode {
-                        Button("Cancel") {
-                            withAnimation(.spring()) {
-                                exitSelectionMode()
-                            }
-                        }
-                    } else {
-                        Button {
-                            photoStore.setHidePhotosInGallery(!photoStore.hidePhotosInGallery)
-                        } label: {
-                            Label(
-                                photoStore.hidePhotosInGallery ? "Show Photos" : "Hide Photos",
-                                systemImage: photoStore.hidePhotosInGallery ? "eye.slash" : "eye"
-                            )
-                        }
+        if isSelectionMode {
+            #if canImport(UIKit)
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    withAnimation(.spring()) {
+                        exitSelectionMode()
                     }
                 }
-                #elseif canImport(AppKit)
-                ToolbarItem(placement: .navigation) {
-                    if isSelectionMode {
-                        Button("Cancel") {
-                            withAnimation(.spring()) {
-                                exitSelectionMode()
-                            }
-                        }
-                    } else {
-                        Button(action: {
-                            photoStore.refreshPhotos()
-                        }) {
-                            if photoStore.isLoadingPhotoList {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .frame(width: 16, height: 16)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                            }
-                        }
-                        .disabled(photoStore.isLoadingPhotoList)
+            }
+            #elseif os(macOS)
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") {
+                    withAnimation(.spring()) {
+                        exitSelectionMode()
                     }
                 }
-                ToolbarItem(placement: .automatic) {
-                    Toggle(isOn: Binding(
-                        get: { photoStore.hidePhotosInGallery },
-                        set: { photoStore.setHidePhotosInGallery($0) }
-                    )) {
-                        Image(systemName: photoStore.hidePhotosInGallery ? "eye.slash" : "eye")
+            }
+            #endif
+
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    withAnimation(.spring()) {
+                        if selectedPhotos.count == sortedPhotos.count {
+                            selectedPhotos.removeAll()
+                        } else {
+                            selectedPhotos = Set(sortedPhotos.map { $0.id })
+                        }
                     }
-                    .help("Hide photos in the gallery")
+                } label: {
+                    Text(selectedPhotos.count == sortedPhotos.count ? "Deselect All" : "Select All")
                 }
-                #endif
-                
-                if isSelectionMode {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button(action: {
-                            withAnimation(.spring()) {
-                                if selectedPhotos.count == sortedPhotos.count {
-                                    selectedPhotos.removeAll()
-                                } else {
-                                    selectedPhotos = Set(sortedPhotos.map { $0.id })
-                                }
-                            }
-                        }) {
-                            Text(selectedPhotos.count == sortedPhotos.count ? "Deselect All" : "Select All")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                        }
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button(role: .destructive, action: {
-                            showDeleteConfirmation = true
-                        }) {
-                            Image(systemName: "trash")
-                        }
-                        .disabled(selectedPhotos.isEmpty)
-                    }
-                } else {
-                    #if canImport(UIKit)
-                    ToolbarItem(placement: .primaryAction) {
-                        Menu {
-                            Button {
-                                showExportSheet = true
-                            } label: {
-                                Label("Export Montage", systemImage: "square.and.arrow.up")
-                            }
-                            .disabled(photoStore.photos.isEmpty)
+            }
 
-                            Menu("Sort By") {
-                                ForEach(SortOption.allCases, id: \.self) { option in
-                                    Button {
-                                        withAnimation {
-                                            sortOption = option
-                                        }
-                                    } label: {
-                                        if sortOption == option {
-                                            Label(option.rawValue, systemImage: "checkmark")
-                                        } else {
-                                            Text(option.rawValue)
-                                        }
-                                    }
-                                }
-                            }
-
-                            Button {
-                                withAnimation(.spring()) {
-                                    isSelectionMode = true
-                                }
-                            } label: {
-                                Label("Select Photos", systemImage: "checkmark.circle")
-                            }
-
-                            Divider()
-
-                            Button {
-                                photoStore.refreshPhotos()
-                            } label: {
-                                Label("Refresh", systemImage: "arrow.clockwise")
-                            }
-                            .disabled(photoStore.isLoadingPhotoList)
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                        }
-                    }
-                    #else
-                    ToolbarItem(placement: .primaryAction) {
-                        Button(action: {
-                            showExportSheet = true
-                        }) {
-                            Label("Export", systemImage: "square.and.arrow.up")
-                        }
-                        .disabled(photoStore.photos.isEmpty)
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Menu {
-                            ForEach(SortOption.allCases, id: \.self) { option in
-                                Button(action: {
-                                    withAnimation {
-                                        sortOption = option
-                                    }
-                                }) {
-                                    HStack {
-                                        Text(option.rawValue)
-                                        if sortOption == option {
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "arrow.up.arrow.down")
-                        }
-                        .controlSize(.large)
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        Button(action: {
-                            withAnimation(.spring()) {
-                                isSelectionMode = true
-                            }
-                        }) {
-                            Image(systemName: "checkmark.circle")
-                        }
-                    }
-                    #endif
+            ToolbarItem(placement: .destructiveAction) {
+                Button(role: .destructive) {
+                    showDeleteConfirmation = true
+                } label: {
+                    Label("Delete", systemImage: "trash")
                 }
+                .disabled(selectedPhotos.isEmpty)
+            }
+        } else {
+            #if canImport(UIKit)
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showExportSheet = true
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .disabled(photoStore.photos.isEmpty)
+
+                Button {
+                    withAnimation(.spring()) {
+                        isSelectionMode = true
+                    }
+                } label: {
+                    Label("Select", systemImage: "checkmark.circle")
+                }
+            }
+
+            ToolbarItem(placement: .topBarLeading) {
+                galleryOptionsMenu
+            }
+            #elseif os(macOS)
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showExportSheet = true
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .disabled(photoStore.photos.isEmpty)
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    withAnimation(.spring()) {
+                        isSelectionMode = true
+                    }
+                } label: {
+                    Label("Select", systemImage: "checkmark.circle")
+                }
+            }
+
+            ToolbarItem(placement: .automatic) {
+                galleryOptionsMenu
+            }
+            #endif
+        }
+    }
+
+    private var galleryOptionsMenu: some View {
+        Menu {
+            Toggle(
+                "Hide Photos",
+                isOn: Binding(
+                    get: { photoStore.hidePhotosInGallery },
+                    set: { photoStore.setHidePhotosInGallery($0) }
+                )
+            )
+
+            Button {
+                photoStore.refreshPhotos()
+            } label: {
+                Label("Refresh Library", systemImage: "arrow.clockwise")
+            }
+            .disabled(photoStore.isLoadingPhotoList)
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
+        }
     }
     
     private func toggleSelection(photo: Photo) {
@@ -394,7 +353,7 @@ struct GalleryView: View {
                 toggleSelection(photo: photo)
             }
         } else {
-            detailPhoto = photo
+            viewerPhotoID = photo.id
         }
     }
 
@@ -423,86 +382,99 @@ struct GalleryView: View {
     }
 }
 
-struct GalleryStatsBanner: View {
-    let currentStreak: Int
-    let longestStreak: Int
-    let totalPhotos: Int
-
-    var body: some View {
-        HStack(spacing: 0) {
-            statColumn(
-                value: currentStreak,
-                label: "Day streak",
-                icon: "flame.fill",
-                tint: currentStreak > 0 ? .orange : .secondary
-            )
-            Divider().padding(.vertical, 8)
-            statColumn(
-                value: longestStreak,
-                label: "Best",
-                icon: "trophy.fill",
-                tint: .yellow
-            )
-            Divider().padding(.vertical, 8)
-            statColumn(
-                value: totalPhotos,
-                label: "Photos",
-                icon: "photo.stack.fill",
-                tint: Color.appAccent
-            )
-        }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 8)
-        .background(.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
+private enum GalleryCollageLayoutEngine {
+    struct Tile: Identifiable {
+        let id: Photo.ID
+        let photo: Photo
+        let width: CGFloat
+        let height: CGFloat
     }
 
-    private func statColumn(value: Int, label: String, icon: String, tint: Color) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(tint)
-                Text("\(value)")
-                    .font(.title3.weight(.semibold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+    struct Row: Identifiable {
+        let id: Int
+        let tiles: [Tile]
+        let height: CGFloat
+    }
+
+    static func rows(
+        photos: [Photo],
+        aspectRatios: [Photo.ID: CGFloat],
+        containerWidth: CGFloat,
+        spacing: CGFloat = 1,
+        targetRowHeight: CGFloat = 150,
+        minRowHeight: CGFloat = 72
+    ) -> [Row] {
+        guard containerWidth > 0, !photos.isEmpty else { return [] }
+
+        var result: [Row] = []
+        var index = 0
+        var rowID = 0
+
+        while index < photos.count {
+            var rowPhotos: [Photo] = []
+
+            while index < photos.count {
+                let candidate = photos[index]
+                let testPhotos = rowPhotos + [candidate]
+                let aspectSum = testPhotos.reduce(CGFloat.zero) { partial, photo in
+                    partial + normalizedAspect(aspectRatios[photo.id])
+                }
+                let gapTotal = spacing * CGFloat(max(testPhotos.count - 1, 0))
+                let rowHeight = (containerWidth - gapTotal) / aspectSum
+
+                if testPhotos.count > 1, rowHeight < minRowHeight {
+                    break
+                }
+
+                rowPhotos.append(candidate)
+                index += 1
+
+                if rowHeight <= targetRowHeight {
+                    break
+                }
             }
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            guard !rowPhotos.isEmpty else { break }
+
+            let isLastRow = index >= photos.count
+            let aspectSum = rowPhotos.reduce(CGFloat.zero) { partial, photo in
+                partial + normalizedAspect(aspectRatios[photo.id])
+            }
+            let gapTotal = spacing * CGFloat(max(rowPhotos.count - 1, 0))
+            var rowHeight = (containerWidth - gapTotal) / aspectSum
+
+            if isLastRow, rowPhotos.count < 4 {
+                rowHeight = min(rowHeight, targetRowHeight)
+            }
+
+            let tiles = rowPhotos.map { photo in
+                let aspect = normalizedAspect(aspectRatios[photo.id])
+                return Tile(
+                    id: photo.id,
+                    photo: photo,
+                    width: rowHeight * aspect,
+                    height: rowHeight
+                )
+            }
+
+            result.append(Row(id: rowID, tiles: tiles, height: rowHeight))
+            rowID += 1
         }
-        .frame(maxWidth: .infinity)
+
+        return result
     }
-}
 
-private struct GalleryMonthSectionHeader: View {
-    let monthKey: String
-    let photoCount: Int
-
-    var body: some View {
-        HStack {
-            Text(monthKey)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text("\(photoCount)")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.tertiary)
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(Color.systemGroupedBackground)
+    private static func normalizedAspect(_ ratio: CGFloat?) -> CGFloat {
+        guard let ratio, ratio.isFinite, ratio > 0 else { return 1 }
+        return min(max(ratio, 0.45), 2.2)
     }
 }
 
 private struct GalleryMonthSection: View {
     let monthKey: String
     let monthPhotos: [Photo]
-    let columns: [GridItem]
+    let targetRowHeight: CGFloat
+    var isFirstSection: Bool = false
     let isSelectionMode: Bool
     let selectedPhotoIDs: Set<Photo.ID>
     let onTap: (Photo) -> Void
@@ -512,30 +484,121 @@ private struct GalleryMonthSection: View {
     let onDelete: (Photo) -> Void
 
     var body: some View {
-        Section {
-            LazyVGrid(columns: columns, spacing: 2) {
-                ForEach(monthPhotos) { photo in
-                    GalleryGridPhotoCell(
-                        photo: photo,
-                        isSelected: selectedPhotoIDs.contains(photo.id),
-                        isSelectionMode: isSelectionMode,
-                        onTap: { onTap(photo) },
-                        onLongPress: { onLongPress(photo) },
-                        onViewPhoto: { onViewPhoto(photo) },
-                        onDetectEyes: { onDetectEyes(photo) },
-                        onDelete: { onDelete(photo) }
-                    )
+        VStack(alignment: .leading, spacing: 0) {
+            Text(monthKey)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, PocketPicDesign.libraryHeaderInset)
+                .padding(.top, isFirstSection ? 4 : 20)
+                .padding(.bottom, 6)
+
+            GalleryCollageView(
+                photos: monthPhotos,
+                spacing: PocketPicDesign.gridSpacing,
+                targetRowHeight: targetRowHeight,
+                isSelectionMode: isSelectionMode,
+                selectedPhotoIDs: selectedPhotoIDs,
+                onTap: onTap,
+                onLongPress: onLongPress,
+                onViewPhoto: onViewPhoto,
+                onDetectEyes: onDetectEyes,
+                onDelete: onDelete
+            )
+        }
+    }
+}
+
+private struct GalleryCollageView: View {
+    let photos: [Photo]
+    let spacing: CGFloat
+    let targetRowHeight: CGFloat
+    let isSelectionMode: Bool
+    let selectedPhotoIDs: Set<Photo.ID>
+    let onTap: (Photo) -> Void
+    let onLongPress: (Photo) -> Void
+    let onViewPhoto: (Photo) -> Void
+    let onDetectEyes: (Photo) -> Void
+    let onDelete: (Photo) -> Void
+
+    @EnvironmentObject private var photoStore: PhotoStore
+    @State private var aspectRatios: [Photo.ID: CGFloat] = [:]
+    #if canImport(UIKit)
+    @State private var containerWidth: CGFloat = UIScreen.main.bounds.width
+    #else
+    @State private var containerWidth: CGFloat = 720
+    #endif
+
+    var body: some View {
+        collageGrid
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { _, width in
+                if width > 0, abs(width - containerWidth) > 0.5 {
+                    containerWidth = width
                 }
             }
-        } header: {
-            GalleryMonthSectionHeader(monthKey: monthKey, photoCount: monthPhotos.count)
+            .task(id: photos.map(\.id)) {
+                await loadAspectRatios()
+            }
+    }
+
+    @ViewBuilder
+    private var collageGrid: some View {
+        let layoutWidth = max(containerWidth, 1)
+        let rows = GalleryCollageLayoutEngine.rows(
+            photos: photos,
+            aspectRatios: aspectRatios,
+            containerWidth: layoutWidth,
+            spacing: spacing,
+            targetRowHeight: targetRowHeight
+        )
+
+        LazyVStack(alignment: .leading, spacing: spacing) {
+            ForEach(rows) { row in
+                HStack(spacing: spacing) {
+                    ForEach(row.tiles) { tile in
+                        GalleryGridPhotoCell(
+                            photo: tile.photo,
+                            tileWidth: tile.width,
+                            tileHeight: tile.height,
+                            isSelected: selectedPhotoIDs.contains(tile.photo.id),
+                            isSelectionMode: isSelectionMode,
+                            onTap: { onTap(tile.photo) },
+                            onLongPress: { onLongPress(tile.photo) },
+                            onViewPhoto: { onViewPhoto(tile.photo) },
+                            onDetectEyes: { onDetectEyes(tile.photo) },
+                            onDelete: { onDelete(tile.photo) }
+                        )
+                    }
+                }
+                .frame(width: layoutWidth, height: row.height, alignment: .leading)
+            }
         }
+        .animation(.easeInOut(duration: 0.25), value: aspectRatios)
+    }
+
+    private func loadAspectRatios() async {
+        var loaded: [Photo.ID: CGFloat] = [:]
+        await withTaskGroup(of: (Photo.ID, CGFloat).self) { group in
+            for photo in photos {
+                group.addTask {
+                    let ratio = await photoStore.aspectRatio(for: photo)
+                    return (photo.id, ratio)
+                }
+            }
+            for await pair in group {
+                loaded[pair.0] = pair.1
+            }
+        }
+        aspectRatios = loaded
     }
 }
 
 private struct GalleryGridPhotoCell: View {
     @EnvironmentObject var photoStore: PhotoStore
     let photo: Photo
+    let tileWidth: CGFloat
+    let tileHeight: CGFloat
     let isSelected: Bool
     let isSelectionMode: Bool
     let onTap: () -> Void
@@ -543,15 +606,32 @@ private struct GalleryGridPhotoCell: View {
     let onViewPhoto: () -> Void
     let onDetectEyes: () -> Void
     let onDelete: () -> Void
+    #if os(macOS)
+    @State private var isHovered = false
+    #endif
 
     var body: some View {
-        PhotoThumbnailCard(
-            photo: photo,
-            isSelected: isSelected,
-            isSelectionMode: isSelectionMode
+        Button(action: onTap) {
+            PhotoThumbnailCard(
+                photo: photo,
+                tileWidth: tileWidth,
+                tileHeight: tileHeight,
+                isSelected: isSelected,
+                isSelectionMode: isSelectionMode
+            )
+        }
+        .buttonStyle(.plain)
+        .frame(width: tileWidth, height: tileHeight)
+        .clipped()
+        .contentShape(Rectangle())
+        #if os(macOS)
+        .opacity(isSelectionMode || !isHovered ? 1 : 0.88)
+        .onHover { isHovered = $0 }
+        #endif
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45)
+                .onEnded { _ in onLongPress() }
         )
-        .onTapGesture(perform: onTap)
-        .onLongPressGesture(minimumDuration: 0.4, perform: onLongPress)
         .contextMenu {
             if !isSelectionMode {
                 Button(action: onViewPhoto) {
@@ -574,98 +654,87 @@ struct PhotoThumbnailCard: View {
     @EnvironmentObject var photoStore: PhotoStore
     @Environment(\.displayScale) private var displayScale
     let photo: Photo
+    let tileWidth: CGFloat
+    let tileHeight: CGFloat
     let isSelected: Bool
     let isSelectionMode: Bool
 
     @State private var thumbnail: PlatformImage?
 
     var body: some View {
-        GeometryReader { geometry in
-            let side = geometry.size.width
-            ZStack {
-                if photoStore.hidePhotosInGallery {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.1))
-                        .frame(width: side, height: side)
-                        .overlay {
-                            Image(systemName: "photo")
-                                .font(.system(size: 26, weight: .light))
-                                .foregroundStyle(.tertiary)
-                        }
-                } else if let image = thumbnail {
-                    #if canImport(UIKit)
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: side, height: side)
-                        .clipped()
-                    #elseif canImport(AppKit)
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: side, height: side)
-                        .clipped()
-                    #endif
-                } else {
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.08))
-                        .frame(width: side, height: side)
-                        .overlay(ProgressView().controlSize(.small))
-                }
+        let loadSize = max(tileWidth, tileHeight)
+        ZStack {
+            if photoStore.hidePhotosInGallery {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.1))
+                    .overlay {
+                        Image(systemName: "photo")
+                            .font(.system(size: 26, weight: .light))
+                            .foregroundStyle(.tertiary)
+                    }
+            } else if let image = thumbnail {
+                #if canImport(UIKit)
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: tileWidth, height: tileHeight)
+                    .clipped()
+                #elseif canImport(AppKit)
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: tileWidth, height: tileHeight)
+                    .clipped()
+                #endif
+            } else {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.08))
+                    .overlay(ProgressView().controlSize(.small))
+            }
 
-                // Selection overlay
-                if isSelectionMode {
-                    // Dim unselected
-                    Color.black.opacity(isSelected ? 0 : 0.25)
+            // Selection overlay — Photos-style checkmark badge
+            if isSelectionMode {
+                Color.black.opacity(isSelected ? 0 : 0.28)
 
-                    VStack {
-                        HStack {
-                            Spacer()
-                            ZStack {
-                                Circle()
-                                    .fill(isSelected ? Color.appAccent : Color.white.opacity(0.85))
-                                    .frame(width: 24, height: 24)
-                                    .shadow(color: .black.opacity(0.15), radius: 2)
-                                if isSelected {
-                                    Image(systemName: "checkmark")
-                                        .foregroundColor(.white)
-                                        .font(.system(size: 12, weight: .bold))
-                                        .transition(.scale.combined(with: .opacity))
-                                }
-                            }
-                            .padding(7)
-                        }
+                VStack {
+                    HStack {
                         Spacer()
+                        ZStack {
+                            Circle()
+                                .strokeBorder(Color.white.opacity(isSelected ? 0 : 0.9), lineWidth: 1.5)
+                                .background(Circle().fill(isSelected ? Color.accentColor : Color.black.opacity(0.22)))
+                                .frame(width: 22, height: 22)
+                            if isSelected {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                        .padding(6)
                     }
+                    Spacer()
                 }
-
-                // Selected highlight border
-                if isSelected && isSelectionMode {
-                    Rectangle()
-                        .stroke(Color.appAccent, lineWidth: 3)
-                }
-            }
-            .scaleEffect(isSelected && isSelectionMode ? 0.96 : 1.0)
-            .onChange(of: photoStore.hidePhotosInGallery) { _, hidden in
-                if hidden { thumbnail = nil }
-            }
-            .task(id: "\(photo.id.uuidString)-\(Int(side * 100))-\(photoStore.hidePhotosInGallery)") {
-                guard !photoStore.hidePhotosInGallery, side > 1 else { return }
-                let loaded = await photoStore.loadThumbnail(for: photo, pointWidth: side, displayScale: displayScale)
-                // Task cancellation (cell scrolled away) — check before applying
-                guard !Task.isCancelled, !photoStore.hidePhotosInGallery else { return }
-                if let loaded {
-                    withAnimation(.easeIn(duration: 0.12)) {
-                        thumbnail = loaded
-                    }
-                }
-            }
-            .onDisappear {
-                // Cancel any in-flight PHImageManager request for this cell
-                photoStore.cancelThumbnailRequest(for: photo)
             }
         }
-        .aspectRatio(1, contentMode: .fit)
+        .frame(width: tileWidth, height: tileHeight)
+        .clipped()
+        .animation(.easeOut(duration: 0.15), value: isSelected)
+        .onChange(of: photoStore.hidePhotosInGallery) { _, hidden in
+            if hidden { thumbnail = nil }
+        }
+        .task(id: "\(photo.id.uuidString)-\(Int(loadSize * 100))-\(photoStore.hidePhotosInGallery)") {
+            guard !photoStore.hidePhotosInGallery, loadSize > 1 else { return }
+            let loaded = await photoStore.loadThumbnail(for: photo, pointWidth: loadSize, displayScale: displayScale)
+            guard !Task.isCancelled, !photoStore.hidePhotosInGallery else { return }
+            if let loaded {
+                withAnimation(.easeIn(duration: 0.12)) {
+                    thumbnail = loaded
+                }
+            }
+        }
+        .onDisappear {
+            photoStore.cancelThumbnailRequest(for: photo)
+        }
     }
 }
 
@@ -688,25 +757,11 @@ struct ExportSheetView: View {
     
     
     private var summaryRow: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.appAccent.opacity(0.12))
-                    .frame(width: 44, height: 44)
-                Image(systemName: "film.stack")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(Color.appAccent)
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(photoStore.photos.count) \(photoStore.photos.count == 1 ? "photo" : "photos")")
-                    .font(.headline)
-                Text("\(String(format: "%.1f", videoDuration))s · \(estimatedFileSize)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(.vertical, 4)
+        PocketPicModalHeader(
+            "\(photoStore.photos.count) \(photoStore.photos.count == 1 ? "photo" : "photos")",
+            subtitle: "\(String(format: "%.1f", videoDuration))s · \(estimatedFileSize)",
+            systemImage: "film.stack"
+        )
     }
 
     private var exportButton: some View {
@@ -721,8 +776,10 @@ struct ExportSheetView: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
         .disabled(exportViewModel.isExporting)
+        #if canImport(UIKit)
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
+        #endif
     }
 
     var body: some View {
@@ -735,56 +792,19 @@ struct ExportSheetView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Form {
-                    Section {
-                        summaryRow
-                    }
-
-                    Section {
-                        Picker("Frame Rate", selection: $exportViewModel.selectedFPS) {
-                            ForEach(exportViewModel.availableFPSOptions, id: \.self) { fps in
-                                Text("\(fps) fps").tag(fps)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                    } footer: {
-                        Text(photoStore.useNativeResolution ? "Native resolution · HEVC" : "Auto orientation · H.264 · 1080p")
-                    }
-
-                    Section {
-                        Toggle(isOn: $exportViewModel.alignEyes) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Align Eyes")
-                                Text("Lines up eyes across frames for a smoother montage")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .tint(Color.appAccent)
-                    } header: {
-                        Text("Options")
-                    }
-                }
-                .safeAreaInset(edge: .bottom) {
-                    exportButton
-                }
+                #if os(macOS)
+                macOSExportForm
+                #else
+                iOSExportForm
+                #endif
             }
         }
         .navigationTitle("Export Montage")
         #if canImport(UIKit)
         .navigationBarTitleDisplayMode(.inline)
-        .interactiveDismissDisabled(exportViewModel.isExporting)
         #endif
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") {
-                    showExportSheet = false
-                }
-                .fontWeight(.medium)
-                .disabled(exportViewModel.isExporting)
-            }
-        }
+        .interactiveDismissDisabled(exportViewModel.isExporting)
+        .toolbar { exportToolbar }
         .overlay {
             if exportViewModel.isExporting {
                 exportingOverlay
@@ -793,54 +813,137 @@ struct ExportSheetView: View {
         }
     }
 
+    #if os(macOS)
+    private var macOSExportForm: some View {
+        Form {
+            Section {
+                LabeledContent("Photos") {
+                    Text("\(photoStore.photos.count)")
+                        .monospacedDigit()
+                }
+                LabeledContent("Duration") {
+                    Text(String(format: "%.1f s", videoDuration))
+                        .monospacedDigit()
+                }
+                LabeledContent("Estimated size") {
+                    Text(estimatedFileSize)
+                }
+            }
+
+            Section {
+                Picker("Frame Rate", selection: $exportViewModel.selectedFPS) {
+                    ForEach(exportViewModel.availableFPSOptions, id: \.self) { fps in
+                        Text("\(fps) fps").tag(fps)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } footer: {
+                Text(photoStore.useNativeResolution ? "Native resolution · HEVC" : "Auto orientation · H.264 · 1080p")
+            }
+
+            Section {
+                Toggle(isOn: $exportViewModel.alignEyes) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Align Eyes")
+                        Text("Matches position, rotation, and eye size to the first photo")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(Color.appAccent)
+            }
+        }
+        .formStyle(.grouped)
+    }
+    #endif
+
+    #if canImport(UIKit)
+    private var iOSExportForm: some View {
+        Form {
+            Section {
+                summaryRow
+            }
+
+            Section {
+                Picker("Frame Rate", selection: $exportViewModel.selectedFPS) {
+                    ForEach(exportViewModel.availableFPSOptions, id: \.self) { fps in
+                        Text("\(fps) fps").tag(fps)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            } footer: {
+                Text(photoStore.useNativeResolution ? "Native resolution · HEVC" : "Auto orientation · H.264 · 1080p")
+            }
+
+            Section {
+                Toggle(isOn: $exportViewModel.alignEyes) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Align Eyes")
+                        Text("Matches position, rotation, and eye size to the first photo")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(Color.appAccent)
+            } header: {
+                Text("Options")
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            exportButton
+        }
+    }
+    #endif
+
+    @ToolbarContentBuilder
+    private var exportToolbar: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button("Cancel") {
+                showExportSheet = false
+            }
+            .disabled(exportViewModel.isExporting)
+        }
+
+        #if os(macOS)
+        ToolbarItem(placement: .confirmationAction) {
+            Button("Export") {
+                Task {
+                    await exportViewModel.exportVideo(photos: photoStore.photos, photoStore: photoStore)
+                }
+            }
+            .disabled(exportViewModel.isExporting || photoStore.photos.isEmpty)
+            .keyboardShortcut(.defaultAction)
+        }
+        #endif
+    }
+
     private var exportingOverlay: some View {
         ZStack {
-            Color.black.opacity(0.55)
+            Color.black.opacity(0.35)
                 .ignoresSafeArea()
 
-            VStack(spacing: 28) {
-                ZStack {
-                    Circle()
-                        .stroke(Color.white.opacity(0.15), lineWidth: 8)
-                        .frame(width: 110, height: 110)
-
-                    Circle()
-                        .trim(from: 0, to: exportViewModel.exportProgress)
-                        .stroke(Color.white, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                        .frame(width: 110, height: 110)
-                        .rotationEffect(.degrees(-90))
-                        .animation(.linear(duration: 0.15), value: exportViewModel.exportProgress)
-
+            VStack(spacing: 16) {
+                ProgressView(value: exportViewModel.exportProgress) {
+                    Text("Creating Montage")
+                        .font(.headline)
+                } currentValueLabel: {
                     Text("\(Int(exportViewModel.exportProgress * 100))%")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
                         .monospacedDigit()
                         .contentTransition(.numericText())
                 }
+                .progressViewStyle(.circular)
+                .controlSize(.large)
 
-                VStack(spacing: 8) {
-                    Text("Creating Montage")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-
-                    Text(exportViewModel.exportStatus.isEmpty ? "Starting export…" : exportViewModel.exportStatus)
-                        .font(.subheadline)
-                        .foregroundColor(.white.opacity(0.75))
-                        .multilineTextAlignment(.center)
-                        .frame(minHeight: 20)
-                }
-
-                ProgressView(value: exportViewModel.exportProgress)
-                    .progressViewStyle(.linear)
-                    .tint(.white)
-                    .frame(maxWidth: 220)
+                Text(exportViewModel.exportStatus.isEmpty ? "Starting export…" : exportViewModel.exportStatus)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(minHeight: 20)
             }
-            .padding(40)
-            .background(
-                RoundedRectangle(cornerRadius: 28)
-                    .fill(.ultraThinMaterial)
-            )
+            .padding(28)
+            .frame(maxWidth: 260)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }
 }
@@ -857,6 +960,104 @@ struct ExportCompleteSheet: View {
     @State private var didSaveToPhotos = false
 
     var body: some View {
+        #if os(macOS)
+        macOSExportCompleteBody
+        #else
+        iOSExportCompleteBody
+        #endif
+    }
+
+    #if os(macOS)
+    private var macOSExportCompleteBody: some View {
+        Form {
+            Section {
+                VStack(spacing: 12) {
+                    exportPreview
+                    Label("Montage Ready", systemImage: "checkmark.circle.fill")
+                        .font(.headline)
+                        .foregroundStyle(.green)
+                    Text("Your time-lapse video has been created.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            }
+
+            Section {
+                Button {
+                    Task {
+                        isSavingToPhotos = true
+                        exportViewModel.errorMessage = nil
+                        await exportViewModel.saveToPhotos(videoURL: videoURL)
+                        isSavingToPhotos = false
+                        if exportViewModel.errorMessage == nil {
+                            didSaveToPhotos = true
+                        }
+                    }
+                } label: {
+                    Label {
+                        if isSavingToPhotos {
+                            Text("Saving…")
+                        } else if didSaveToPhotos {
+                            Text("Saved to Photos")
+                        } else {
+                            Text("Save to Photos")
+                        }
+                    } icon: {
+                        if isSavingToPhotos {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: didSaveToPhotos ? "checkmark.circle.fill" : "photo.on.rectangle.angled")
+                        }
+                    }
+                }
+                .disabled(isSavingToPhotos)
+
+                Button {
+                    presentMacSharePicker()
+                } label: {
+                    Label("Share…", systemImage: "square.and.arrow.up")
+                }
+                .disabled(isSavingToPhotos)
+
+                Button {
+                    SaveToFileHelper.showSavePanel(
+                        sourceURL: videoURL,
+                        onSuccess: { exportViewModel.completedExport = nil },
+                        onError: { exportViewModel.errorMessage = $0 }
+                    )
+                } label: {
+                    Label("Save to File…", systemImage: "folder")
+                }
+                .disabled(isSavingToPhotos)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Export Complete")
+        .alert("Error", isPresented: .constant(exportViewModel.errorMessage != nil)) {
+            Button("OK") {
+                exportViewModel.errorMessage = nil
+            }
+        } message: {
+            if let error = exportViewModel.errorMessage {
+                Text(error)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { onDismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isSavingToPhotos)
+            }
+        }
+    }
+    #endif
+
+    #if canImport(UIKit)
+    private var iOSExportCompleteBody: some View {
         ScrollView {
             VStack(spacing: 24) {
                 exportPreview
@@ -864,7 +1065,7 @@ struct ExportCompleteSheet: View {
                 VStack(spacing: 6) {
                     Label("Montage Ready", systemImage: "checkmark.circle.fill")
                         .font(.headline)
-                        .foregroundStyle(Color.appAccent)
+                        .foregroundStyle(.green)
                     Text("Your time-lapse video has been created.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -900,14 +1101,10 @@ struct ExportCompleteSheet: View {
                         .disabled(isSavingToPhotos || isPreparingShare)
 
                         Button {
-                            #if os(macOS)
-                            presentMacSharePicker()
-                            #else
                             isPreparingShare = true
                             DispatchQueue.main.async {
                                 showShareSheet = true
                             }
-                            #endif
                         } label: {
                             Label("Share", systemImage: "square.and.arrow.up")
                                 .frame(maxWidth: .infinity)
@@ -915,22 +1112,6 @@ struct ExportCompleteSheet: View {
                         .buttonStyle(.bordered)
                         .controlSize(.large)
                         .disabled(isSavingToPhotos || isPreparingShare)
-
-                        #if os(macOS)
-                        Button {
-                            SaveToFileHelper.showSavePanel(
-                                sourceURL: videoURL,
-                                onSuccess: { exportViewModel.completedExport = nil },
-                                onError: { exportViewModel.errorMessage = $0 }
-                            )
-                        } label: {
-                            Label("Save to File…", systemImage: "folder")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.large)
-                        .disabled(isSavingToPhotos || isPreparingShare)
-                        #endif
                 }
             }
             .padding(24)
@@ -938,9 +1119,7 @@ struct ExportCompleteSheet: View {
         }
         .background(Color.systemGroupedBackground)
         .navigationTitle("Export Complete")
-        #if canImport(UIKit)
         .navigationBarTitleDisplayMode(.inline)
-        #endif
         .alert("Error", isPresented: .constant(exportViewModel.errorMessage != nil)) {
             Button("OK") {
                 exportViewModel.errorMessage = nil
@@ -950,7 +1129,6 @@ struct ExportCompleteSheet: View {
                 Text(error)
             }
         }
-        #if !os(macOS)
         .sheet(isPresented: $showShareSheet, onDismiss: {
             isPreparingShare = false
         }) {
@@ -964,7 +1142,6 @@ struct ExportCompleteSheet: View {
                 sharePreparingOverlay
             }
         }
-        #endif
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Done") { onDismiss() }
@@ -973,6 +1150,7 @@ struct ExportCompleteSheet: View {
             }
         }
     }
+    #endif
 
     @ViewBuilder
     private var exportPreview: some View {
@@ -1289,7 +1467,7 @@ private struct GalleryOverlaysModifier: ViewModifier {
     @Binding var pendingExportCompletion: Bool
     @Binding var showSingleDeleteConfirmation: Bool
     @Binding var showEyeDetectionPhoto: Photo?
-    @Binding var detailPhoto: Photo?
+    @Binding var viewerPhotoID: Photo.ID?
     @Binding var deleteTargetPhoto: Photo?
     @ObservedObject var exportViewModel: ExportViewModel
     let photoStore: PhotoStore
@@ -1313,7 +1491,7 @@ private struct GalleryOverlaysModifier: ViewModifier {
                 }
                 #if canImport(UIKit)
                 .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+                .pocketPicSheetChrome()
                 #else
                 .pocketPicModalPresentation(.export)
                 #endif
@@ -1358,24 +1536,20 @@ private struct GalleryOverlaysModifier: ViewModifier {
                 }
                 #if canImport(UIKit)
                 .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
+                .pocketPicSheetChrome()
                 #else
                 .pocketPicModalPresentation(.exportComplete)
                 #endif
             }
+            .modifier(PhotoViewerPresentation(photoID: $viewerPhotoID))
             #if os(macOS)
             .sheet(item: $showEyeDetectionPhoto) { photo in
                 EyeDetectionSheet(photo: photo, photoStore: photoStore)
-            }
-            .sheet(item: $detailPhoto) { photo in
-                PhotoDetailView(photo: photo)
-                    .environmentObject(photoStore)
             }
             #else
             .fullScreenCover(item: $showEyeDetectionPhoto) { photo in
                 EyeDetectionSheet(photo: photo, photoStore: photoStore)
             }
-            .modifier(PhotoDetailPresentation(photo: $detailPhoto))
             #endif
             .confirmationDialog(
                 "Delete Photo",
@@ -1402,24 +1576,66 @@ private struct GalleryOverlaysModifier: ViewModifier {
     }
 }
 
-#if canImport(UIKit)
-private struct PhotoDetailPresentation: ViewModifier {
-    @Binding var photo: Photo?
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+private struct PhotoViewerPresentation: ViewModifier {
+    @Binding var photoID: Photo.ID?
     @EnvironmentObject private var photoStore: PhotoStore
+    #if canImport(UIKit)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
+
+    private var viewer: some View {
+        PhotoViewerView(
+            photos: photoStore.photos,
+            selectedPhotoID: $photoID
+        )
+        .environmentObject(photoStore)
+    }
 
     func body(content: Content) -> some View {
-        if horizontalSizeClass == .regular {
+        content
+            #if os(macOS)
+            .sheet(isPresented: viewerPresented) {
+                viewer
+                    .frame(minWidth: 760, minHeight: 620)
+            }
+            #elseif canImport(UIKit)
+            .modifier(IOSPhotoViewerPresentation(
+                isPresented: viewerPresented,
+                useSheet: horizontalSizeClass == .regular
+            ) {
+                viewer
+            })
+            #endif
+    }
+
+    private var viewerPresented: Binding<Bool> {
+        Binding(
+            get: { photoID != nil },
+            set: { isPresented in
+                if !isPresented { photoID = nil }
+            }
+        )
+    }
+}
+
+#if canImport(UIKit) && !os(macOS)
+private struct IOSPhotoViewerPresentation<Viewer: View>: ViewModifier {
+    @Binding var isPresented: Bool
+    let useSheet: Bool
+    @ViewBuilder let viewer: () -> Viewer
+
+    func body(content: Content) -> some View {
+        if useSheet {
             content
-                .sheet(item: $photo) { photo in
-                    PhotoDetailView(photo: photo)
-                        .environmentObject(photoStore)
+                .sheet(isPresented: $isPresented) {
+                    viewer()
+                        .presentationDetents([.large])
+                        .presentationDragIndicator(.visible)
                 }
         } else {
             content
-                .fullScreenCover(item: $photo) { photo in
-                    PhotoDetailView(photo: photo)
-                        .environmentObject(photoStore)
+                .fullScreenCover(isPresented: $isPresented) {
+                    viewer()
                 }
         }
     }

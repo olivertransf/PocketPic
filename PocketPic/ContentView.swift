@@ -32,7 +32,7 @@ private struct IOSRootView: View {
             GalleryView()
                 .environment(\.requestCamera, $showCamera)
                 .tabItem {
-                    Label("Photos", systemImage: "photo.on.rectangle.angled")
+                    Label("Library", systemImage: "photo.on.rectangle.angled")
                 }
                 .tag(0)
 
@@ -71,45 +71,102 @@ private struct IOSRootView: View {
 
 private struct CameraPlaceholderView: View {
     var body: some View {
-        Color.clear
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.systemGroupedBackground)
+        PocketPicGroupedBackground()
     }
 }
 #endif
 
 #if os(macOS) || targetEnvironment(macCatalyst)
+private enum MacSection: String, CaseIterable, Identifiable {
+    case library
+    case camera
+    case settings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .library: "Library"
+        case .camera: "Camera"
+        case .settings: "Settings"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .library: "photo.on.rectangle.angled"
+        case .camera: "camera.fill"
+        case .settings: "gearshape"
+        }
+    }
+}
+
 private struct MacRootView: View {
     @EnvironmentObject private var photoStore: PhotoStore
-    @State private var selectedTab = 0
+    @State private var selection: MacSection? = .library
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            GalleryView()
-                .tabItem {
-                    Label("Gallery", systemImage: "photo.on.rectangle")
-                }
-                .tag(0)
-                .environmentObject(photoStore)
-
-            CameraView(onDismiss: {
-                selectedTab = 0
-            })
-            .environmentObject(photoStore)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .tabItem {
-                Label("Camera", systemImage: "camera.fill")
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            List(MacSection.allCases, selection: $selection) { section in
+                Label(section.title, systemImage: section.icon)
+                    .tag(section)
             }
-            .tag(1)
-
-            SettingsView()
-                .tabItem {
-                    Label("Settings", systemImage: "gear")
-                }
-                .tag(2)
-                .environmentObject(photoStore)
+            .navigationTitle("PocketPic")
+            .listStyle(.sidebar)
+            .frame(minWidth: 200)
+        } detail: {
+            macDetail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .navigationSplitViewStyle(.automatic)
         .tint(Color.appAccent)
+        .onChange(of: selection) { _, newSelection in
+            columnVisibility = newSelection == .camera ? .detailOnly : .all
+        }
+    }
+
+    @ViewBuilder
+    private var macDetail: some View {
+        switch selection ?? .library {
+        case .library:
+            GalleryView()
+                .environmentObject(photoStore)
+        case .camera:
+            NavigationStack {
+                CameraView(
+                    onDismiss: { selection = .library },
+                    embeddedInAppChrome: true
+                )
+                .environmentObject(photoStore)
+                .navigationTitle("Camera")
+                #if os(macOS)
+                .navigationSubtitle("Take your daily photo")
+                #endif
+                .toolbar {
+                    ToolbarItem(placement: .navigation) {
+                        Button {
+                            selection = .library
+                        } label: {
+                            Label("Library", systemImage: "photo.on.rectangle.angled")
+                        }
+                    }
+                    ToolbarItem(placement: .automatic) {
+                        Button {
+                            selection = .settings
+                        } label: {
+                            Label("Settings", systemImage: "gearshape")
+                        }
+                    }
+                }
+                .toolbarBackground(.visible, for: .windowToolbar)
+            }
+            .background(Color.black)
+        case .settings:
+            SettingsView()
+                .environmentObject(photoStore)
+                .background(Color.systemGroupedBackground)
+        }
     }
 }
 #endif

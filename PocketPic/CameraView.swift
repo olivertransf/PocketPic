@@ -8,6 +8,7 @@
 import SwiftUI
 import AVFoundation
 import Combine
+import CoreMedia
 
 #if canImport(UIKit)
 import UIKit
@@ -29,12 +30,99 @@ struct CameraView: View {
     @State private var orientation = UIDeviceOrientation.portrait
     #endif
     let onDismiss: (() -> Void)?
-    
-    init(onDismiss: (() -> Void)? = nil) {
+    /// When true (macOS main window), skip the floating close chip; navigation toolbar handles exit.
+    var embeddedInAppChrome: Bool
+    /// Compact layout for the menu bar extra window.
+    var compactMenuBarChrome: Bool
+
+    init(
+        onDismiss: (() -> Void)? = nil,
+        embeddedInAppChrome: Bool = false,
+        compactMenuBarChrome: Bool = false
+    ) {
         self.onDismiss = onDismiss
+        self.embeddedInAppChrome = embeddedInAppChrome
+        self.compactMenuBarChrome = compactMenuBarChrome
     }
     
     var body: some View {
+        cameraWrapper
+        #if canImport(UIKit)
+            .ignoresSafeArea()
+            .statusBarHidden()
+        #elseif os(macOS)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black)
+            .toolbar {
+                if embeddedInAppChrome, !compactMenuBarChrome {
+                    macEmbeddedToolbarContent
+                }
+            }
+        #endif
+        #if canImport(UIKit)
+            .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
+                orientation = UIDevice.current.orientation
+            }
+            .onAppear {
+                resetCaptureState()
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+                orientation = UIDevice.current.orientation
+                cameraController.preferredPosition = photoStore.defaultCameraPosition == "back" ? .back : .front
+                overlayLoadToken = UUID()
+                cameraController.startSession()
+            }
+            .onDisappear {
+                UIDevice.current.endGeneratingDeviceOrientationNotifications()
+                cameraController.stopSession()
+            }
+        #else
+            .onAppear {
+                resetCaptureState()
+                cameraController.preferredPosition = photoStore.defaultCameraPosition == "back" ? .back : .front
+                overlayLoadToken = UUID()
+                cameraController.startSession()
+            }
+            .onDisappear {
+                cameraController.stopSession()
+            }
+        #endif
+            .task(id: overlayLoadToken) {
+                guard let last = photoStore.getLastPhoto() else {
+                    lastPhotoPreview = nil
+                    return
+                }
+                #if os(macOS)
+                let scale = NSScreen.main?.backingScaleFactor ?? 2
+                #else
+                let scale = UIScreen.main.scale
+                #endif
+                lastPhotoPreview = await photoStore.loadThumbnail(for: last, pointWidth: 480, displayScale: scale)
+            }
+            .onChange(of: photoStore.photos.count) { _, _ in
+                overlayLoadToken = UUID()
+            }
+        #if os(macOS)
+            .preference(key: CameraPreviewAspectRatioKey.self, value: cameraController.previewAspectRatio)
+        #endif
+    }
+
+    @ViewBuilder
+    private var cameraWrapper: some View {
+        #if os(macOS)
+        CameraViewWrapper(
+            cameraController: cameraController,
+            capturedImage: $capturedImage,
+            showCapturedImage: $showCapturedImage,
+            showOverlay: $showOverlay,
+            lastPhotoImage: lastPhotoPreview,
+            overlayOpacity: photoStore.overlayOpacity,
+            onDismiss: { onDismiss?() ?? dismiss() },
+            onCapture: capturePhoto,
+            onSave: savePhoto,
+            showsCloseButton: !embeddedInAppChrome,
+            isCompact: compactMenuBarChrome
+        )
+        #else
         CameraViewWrapper(
             cameraController: cameraController,
             capturedImage: $capturedImage,
@@ -46,50 +134,7 @@ struct CameraView: View {
             onCapture: capturePhoto,
             onSave: savePhoto
         )
-        .ignoresSafeArea()
-        #if canImport(UIKit)
-        .statusBarHidden()
-        .onReceive(NotificationCenter.default.publisher(for: UIDevice.orientationDidChangeNotification)) { _ in
-            orientation = UIDevice.current.orientation
-        }
-        .onAppear {
-            resetCaptureState()
-            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
-            orientation = UIDevice.current.orientation
-            cameraController.preferredPosition = photoStore.defaultCameraPosition == "back" ? .back : .front
-            overlayLoadToken = UUID()
-            cameraController.startSession()
-        }
-        .onDisappear {
-            UIDevice.current.endGeneratingDeviceOrientationNotifications()
-            cameraController.stopSession()
-        }
-        #else
-        .onAppear {
-            resetCaptureState()
-            cameraController.preferredPosition = photoStore.defaultCameraPosition == "back" ? .back : .front
-            overlayLoadToken = UUID()
-            cameraController.startSession()
-        }
-        .onDisappear {
-            cameraController.stopSession()
-        }
         #endif
-        .task(id: overlayLoadToken) {
-            guard let last = photoStore.getLastPhoto() else {
-                lastPhotoPreview = nil
-                return
-            }
-            #if os(macOS)
-            let scale = NSScreen.main?.backingScaleFactor ?? 2
-            #else
-            let scale = UIScreen.main.scale
-            #endif
-            lastPhotoPreview = await photoStore.loadThumbnail(for: last, pointWidth: 480, displayScale: scale)
-        }
-        .onChange(of: photoStore.photos.count) { _, _ in
-            overlayLoadToken = UUID()
-        }
     }
     
     private func capturePhoto() {
@@ -126,7 +171,53 @@ struct CameraView: View {
         showOverlay = false
         isSaving = false
     }
+
+    #if os(macOS)
+    @ToolbarContentBuilder
+    private var macEmbeddedToolbarContent: some ToolbarContent {
+        if embeddedInAppChrome, !showCapturedImage {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showOverlay.toggle()
+                } label: {
+                    Label(
+                        showOverlay ? "Hide Overlay" : "Show Overlay",
+                        systemImage: showOverlay ? "person.crop.rectangle.stack.fill" : "person.crop.rectangle.stack"
+                    )
+                }
+                .help("Toggle last-photo alignment overlay")
+                .disabled(lastPhotoPreview == nil)
+
+                Button {
+                    switchMacCamera()
+                } label: {
+                    Label("Switch Camera", systemImage: "arrow.triangle.2.circlepath.camera")
+                }
+                .help("Switch camera")
+                .disabled(cameraController.availableCameras.count <= 1)
+            }
+        }
+    }
+
+    private func switchMacCamera() {
+        let cameras = cameraController.availableCameras
+        guard cameras.count > 1, let current = cameraController.currentCamera else { return }
+        let currentIndex = cameras.firstIndex(where: { $0.uniqueID == current.uniqueID }) ?? 0
+        let nextIndex = (currentIndex + 1) % cameras.count
+        cameraController.switchCamera(to: cameras[nextIndex])
+    }
+    #endif
 }
+
+#if os(macOS)
+struct CameraPreviewAspectRatioKey: PreferenceKey {
+    static var defaultValue: CGFloat = 4.0 / 3.0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+#endif
 
 // MARK: - Camera Controller
 
@@ -144,7 +235,8 @@ class CameraController: NSObject, ObservableObject {
 
     @Published var availableCameras: [AVCaptureDevice] = []
     @Published var currentCamera: AVCaptureDevice?
-    
+    /// Width ÷ height for the active camera format (typically 4:3 on Mac photo cameras).
+    @Published var previewAspectRatio: CGFloat = 4.0 / 3.0
     override init() {
         super.init()
         requestCameraPermissionAndDiscover()
@@ -426,8 +518,20 @@ class CameraController: NSObject, ObservableObject {
 
             DispatchQueue.main.async {
                 self.currentCamera = device
+                self.updatePreviewAspectRatio(from: device)
                 completion?()
             }
+        }
+    }
+
+    private func updatePreviewAspectRatio(from device: AVCaptureDevice) {
+        let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+        // Always use landscape orientation for the menu bar panel (matches macOS camera apps).
+        let width = CGFloat(max(dimensions.width, dimensions.height))
+        let height = CGFloat(max(min(dimensions.width, dimensions.height), 1))
+        let ratio = width / height
+        DispatchQueue.main.async { [weak self] in
+            self?.previewAspectRatio = ratio
         }
     }
     
@@ -567,6 +671,7 @@ class CameraController: NSObject, ObservableObject {
             }
             camera.unlockForConfiguration()
             isSetup = true
+            updatePreviewAspectRatio(from: camera)
         } catch {
             print("Error setting up camera: \(error)")
             captureSession.commitConfiguration()
@@ -701,58 +806,172 @@ struct CameraViewWrapper: View {
     let onDismiss: () -> Void
     let onCapture: () -> Void
     let onSave: () -> Void
+    var showsCloseButton: Bool = true
+    var isCompact: Bool = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .topLeading) {
+        Group {
+            if isCompact {
+                macPreviewSection
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 0) {
+                    macPreviewSection
+                        .layoutPriority(0)
+
+                    MacCameraControlBar(
+                        showCapturedImage: showCapturedImage,
+                        showOverlay: showOverlay,
+                        hasOverlayPhoto: lastPhotoImage != nil,
+                        canSwitchCamera: cameraController.availableCameras.count > 1,
+                        onCapture: onCapture,
+                        onSave: onSave,
+                        onRetake: {
+                            capturedImage = nil
+                            showCapturedImage = false
+                        },
+                        onToggleOverlay: { showOverlay.toggle() },
+                        onSwitchCamera: switchCamera,
+                        showsAuxiliaryControls: !showsCloseButton,
+                        isCompact: false
+                    )
+                    .layoutPriority(1)
+                    .zIndex(1)
+                }
+            }
+        }
+        .background(Color.black)
+    }
+
+    private var macPreviewSection: some View {
+        GeometryReader { geometry in
+            ZStack {
                 MacCameraPreviewRepresentable(session: cameraController.captureSession)
-                    .background(Color.black)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
 
                 if showOverlay, let lastPhotoImage {
                     Image(nsImage: lastPhotoImage)
                         .resizable()
                         .scaledToFill()
+                        .frame(width: geometry.size.width, height: geometry.size.height)
+                        .clipped()
                         .opacity(overlayOpacity)
                         .allowsHitTesting(false)
+                        .animation(.easeInOut(duration: 0.2), value: showOverlay)
                 }
 
                 if showCapturedImage, let capturedImage {
                     Image(nsImage: capturedImage)
                         .resizable()
                         .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
                         .background(Color.black)
                 }
 
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .frame(width: 22, height: 22)
-                        .background(.black.opacity(0.28), in: Circle())
+                if showOverlay, lastPhotoImage != nil, !showCapturedImage, !isCompact {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Label("Alignment overlay", systemImage: "person.crop.rectangle.stack.fill")
+                                .font(.caption.weight(.medium))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .padding(14)
+                        }
+                        Spacer()
+                    }
+                    .allowsHitTesting(false)
                 }
-                .buttonStyle(.plain)
-                .padding(10)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
 
-            MacCameraControlBar(
-                cameraController: cameraController,
-                showCapturedImage: showCapturedImage,
-                showOverlay: showOverlay,
-                hasOverlayPhoto: lastPhotoImage != nil,
-                onCapture: onCapture,
-                onSave: onSave,
-                onRetake: {
-                    capturedImage = nil
-                    showCapturedImage = false
-                },
-                onToggleOverlay: { showOverlay.toggle() },
-                onSwitchCamera: switchCamera
-            )
+                if showsCloseButton {
+                    VStack {
+                        HStack {
+                            Button(action: onDismiss) {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: isCompact ? 11 : 14, weight: .bold))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: isCompact ? 28 : 36, height: isCompact ? 28 : 36)
+                                    .background(.ultraThinMaterial, in: Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(isCompact ? 8 : 14)
+                            Spacer()
+                        }
+                        Spacer()
+                    }
+                }
+
+                if isCompact {
+                    macCompactFloatingControls
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var macCompactFloatingControls: some View {
+        if showCapturedImage {
+            VStack {
+                Spacer()
+                HStack(spacing: 10) {
+                    Button("Retake") {
+                        capturedImage = nil
+                        showCapturedImage = false
+                    }
+                    .controlSize(.small)
+                    .keyboardShortcut(.cancelAction)
+
+                    Spacer(minLength: 0)
+
+                    Button("Use Photo", action: onSave)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .keyboardShortcut(.defaultAction)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(.ultraThinMaterial)
+            }
+        } else {
+            VStack {
+                Spacer()
+                HStack(spacing: 0) {
+                    MacCompactOverlayButton(
+                        symbol: "person.crop.rectangle.stack",
+                        selectedSymbol: "person.crop.rectangle.stack.fill",
+                        isSelected: showOverlay,
+                        isEnabled: lastPhotoImage != nil,
+                        help: "Show last photo overlay",
+                        action: { showOverlay.toggle() }
+                    )
+
+                    Spacer(minLength: 0)
+
+                    MacCompactShutterButton(action: onCapture)
+
+                    Spacer(minLength: 0)
+
+                    if cameraController.availableCameras.count > 1 {
+                        MacCompactOverlayButton(
+                            symbol: "arrow.triangle.2.circlepath.camera",
+                            isEnabled: true,
+                            help: "Switch camera",
+                            action: switchCamera
+                        )
+                    } else {
+                        Color.clear
+                            .frame(width: 34, height: 34)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 14)
+            }
+        }
     }
 
     private func switchCamera() {
@@ -764,82 +983,198 @@ struct CameraViewWrapper: View {
     }
 }
 
+private struct MacCompactOverlayButton: View {
+    let symbol: String
+    var selectedSymbol: String?
+    var isSelected: Bool = false
+    var isEnabled: Bool = true
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isSelected ? (selectedSymbol ?? symbol) : symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(.black.opacity(0.38), in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(.white.opacity(isSelected ? 0.7 : 0.25), lineWidth: isSelected ? 1.5 : 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.35)
+        .accessibilityLabel(help)
+    }
+}
+
+private struct MacCompactShutterButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.85), lineWidth: 2.5)
+                    .frame(width: 46, height: 46)
+                Circle()
+                    .fill(Color.white.opacity(0.95))
+                    .frame(width: 36, height: 36)
+            }
+            .frame(width: 50, height: 50)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Capture photo")
+        .accessibilityLabel("Capture photo")
+        .keyboardShortcut(.return, modifiers: [])
+    }
+}
+
+private struct MacCameraGlassButton: View {
+    let symbol: String
+    var selectedSymbol: String?
+    var isSelected: Bool = false
+    var isEnabled: Bool = true
+    var isCompact: Bool = false
+    let help: String
+    let action: () -> Void
+
+    private var buttonSize: CGFloat { isCompact ? 40 : 56 }
+    private var iconSize: CGFloat { isCompact ? 17 : 22 }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isSelected ? (selectedSymbol ?? symbol) : symbol)
+                .font(.system(size: iconSize, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.primary)
+                .frame(width: buttonSize, height: buttonSize)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay {
+                    Circle()
+                        .strokeBorder(.primary.opacity(isSelected ? 0.35 : 0.14), lineWidth: isSelected ? 2 : 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.38)
+        .accessibilityLabel(help)
+    }
+}
+
+private struct MacCameraShutterButton: View {
+    let action: () -> Void
+    var isCompact: Bool = false
+
+    private var outerSize: CGFloat { isCompact ? 54 : 76 }
+    private var innerSize: CGFloat { isCompact ? 42 : 60 }
+    private var frameSize: CGFloat { isCompact ? 58 : 84 }
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .strokeBorder(Color.primary.opacity(0.28), lineWidth: isCompact ? 2.5 : 3)
+                    .frame(width: outerSize, height: outerSize)
+                Circle()
+                    .fill(Color.primary.opacity(0.92))
+                    .frame(width: innerSize, height: innerSize)
+            }
+            .frame(width: frameSize, height: frameSize)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Capture photo")
+        .accessibilityLabel("Capture photo")
+        .keyboardShortcut(.return, modifiers: [])
+    }
+}
+
 private struct MacCameraControlBar: View {
-    @ObservedObject var cameraController: CameraController
     let showCapturedImage: Bool
     let showOverlay: Bool
     let hasOverlayPhoto: Bool
+    let canSwitchCamera: Bool
     let onCapture: () -> Void
     let onSave: () -> Void
     let onRetake: () -> Void
     let onToggleOverlay: () -> Void
     let onSwitchCamera: () -> Void
+    /// When false, overlay/switch live in the window toolbar instead.
+    var showsAuxiliaryControls: Bool = true
+    var isCompact: Bool = false
 
-    private var canSwitchCamera: Bool {
-        cameraController.availableCameras.count > 1
-    }
+    private var sideControlSize: CGFloat { isCompact ? 40 : 56 }
 
     var body: some View {
         Group {
             if showCapturedImage {
-                HStack(spacing: 12) {
+                HStack(spacing: isCompact ? 10 : 16) {
                     Button("Retake", action: onRetake)
+                        .controlSize(isCompact ? .regular : .large)
                         .keyboardShortcut(.cancelAction)
 
                     Spacer(minLength: 0)
 
                     Button("Use Photo", action: onSave)
                         .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
+                        .controlSize(isCompact ? .regular : .large)
                         .keyboardShortcut(.defaultAction)
                 }
             } else {
-                HStack(spacing: 12) {
-                    Button(action: onToggleOverlay) {
-                        Image(systemName: showOverlay ? "person.crop.rectangle.stack.fill" : "person.crop.rectangle.stack")
-                            .symbolRenderingMode(.hierarchical)
+                HStack(spacing: isCompact ? 14 : 24) {
+                    if showsAuxiliaryControls {
+                        MacCameraGlassButton(
+                            symbol: "person.crop.rectangle.stack",
+                            selectedSymbol: "person.crop.rectangle.stack.fill",
+                            isSelected: showOverlay,
+                            isEnabled: hasOverlayPhoto,
+                            isCompact: isCompact,
+                            help: "Show last photo overlay",
+                            action: onToggleOverlay
+                        )
+                    } else {
+                        Color.clear
+                            .frame(width: sideControlSize, height: sideControlSize)
+                            .accessibilityHidden(true)
                     }
-                    .buttonStyle(.borderless)
-                    .help("Show last photo overlay")
-                    .disabled(!hasOverlayPhoto)
-                    .opacity(hasOverlayPhoto ? 1 : 0.35)
 
                     Spacer(minLength: 0)
 
-                    Button(action: onCapture) {
-                        ZStack {
-                            Circle()
-                                .strokeBorder(Color.primary.opacity(0.22), lineWidth: 2.5)
-                                .frame(width: 48, height: 48)
-                            Circle()
-                                .fill(Color.primary.opacity(0.88))
-                                .frame(width: 38, height: 38)
-                        }
-                        .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Capture photo")
-                    .accessibilityLabel("Capture photo")
+                    MacCameraShutterButton(action: onCapture, isCompact: isCompact)
 
                     Spacer(minLength: 0)
 
-                    Button(action: onSwitchCamera) {
-                        Image(systemName: "arrow.triangle.2.circlepath.camera")
-                            .symbolRenderingMode(.hierarchical)
+                    if showsAuxiliaryControls {
+                        MacCameraGlassButton(
+                            symbol: "arrow.triangle.2.circlepath.camera",
+                            isEnabled: canSwitchCamera,
+                            isCompact: isCompact,
+                            help: "Switch camera",
+                            action: onSwitchCamera
+                        )
+                    } else {
+                        Color.clear
+                            .frame(width: sideControlSize, height: sideControlSize)
+                            .accessibilityHidden(true)
                     }
-                    .buttonStyle(.borderless)
-                    .help("Switch camera")
-                    .disabled(!canSwitchCamera)
-                    .opacity(canSwitchCamera ? 1 : 0)
-                    .frame(width: 28)
                 }
-                .controlSize(.large)
-                .labelStyle(.iconOnly)
             }
         }
-        .padding(.horizontal, 18)
-        .frame(height: 54)
+        .padding(.horizontal, isCompact ? 14 : 36)
+        .padding(.vertical, isCompact ? 10 : 18)
+        .frame(minHeight: isCompact ? 64 : 104)
         .background(.bar)
+        .overlay(alignment: .top) {
+            if !isCompact {
+                Divider()
+            }
+        }
     }
 }
 
@@ -1132,10 +1467,10 @@ class CameraContainerView: UIView {
         saveButton.setTitle("Use Photo", for: .normal)
         saveButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
         saveButton.setTitleColor(.white, for: .normal)
-        saveButton.backgroundColor = UIColor(red: 0.051, green: 0.580, blue: 0.533, alpha: 1)
+        saveButton.backgroundColor = .appAccent
         saveButton.layer.cornerRadius = 14
         saveButton.layer.cornerCurve = .continuous
-        saveButton.layer.shadowColor = UIColor(red: 0.051, green: 0.580, blue: 0.533, alpha: 1).cgColor
+        saveButton.layer.shadowColor = UIColor.appAccent.cgColor
         saveButton.layer.shadowOpacity = 0.45
         saveButton.layer.shadowOffset = CGSize(width: 0, height: 4)
         saveButton.layer.shadowRadius = 10

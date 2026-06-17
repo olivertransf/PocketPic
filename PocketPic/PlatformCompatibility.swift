@@ -13,14 +13,16 @@ import UIKit
 typealias PlatformImage = UIImage
 
 extension UIImage {
-    /// Renders the image upright so pixel data matches `size` and Vision/drawing agree.
+    /// Renders upright at pixel resolution so Vision, drawing, and export agree.
     nonisolated func normalizedUpOrientation() -> UIImage {
+        let pixel = pixelSize
+        guard pixel.width > 0, pixel.height > 0 else { return self }
         let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
+        format.scale = 1
         format.opaque = false
-        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let renderer = UIGraphicsImageRenderer(size: pixel, format: format)
         return renderer.image { _ in
-            draw(in: CGRect(origin: .zero, size: size))
+            draw(in: CGRect(origin: .zero, size: pixel))
         }
     }
 
@@ -99,8 +101,8 @@ extension NSImage {
 // MARK: - Shared Colors
 
 extension Color {
-    /// Primary tint used throughout the app.
-    static var appAccent: Color { Color(red: 0.051, green: 0.580, blue: 0.533) }
+    /// Primary tint — system-style blue from `AccentColor` in the asset catalog.
+    static var appAccent: Color { Color("AccentColor") }
 
     static var systemBackground: Color {
         #if canImport(UIKit)
@@ -123,6 +125,20 @@ extension Color {
     }
 }
 
+#if canImport(UIKit)
+extension UIColor {
+    static var appAccent: UIColor {
+        UIColor(named: "AccentColor") ?? UIColor.systemBlue
+    }
+}
+#elseif canImport(AppKit)
+extension NSColor {
+    static var appAccent: NSColor {
+        NSColor(named: "AccentColor") ?? NSColor.systemBlue
+    }
+}
+#endif
+
 // MARK: - iOS layout
 
 #if canImport(UIKit)
@@ -143,6 +159,22 @@ extension View {
     @ViewBuilder
     func pocketPicReadableWidth() -> some View {
         modifier(PocketPicReadableWidthModifier())
+    }
+
+    /// `navigationSubtitle` on macOS and iOS 26+; no-op on earlier iOS (use inline fallback).
+    @ViewBuilder
+    func pocketPicNavigationSubtitle(_ subtitle: String) -> some View {
+        #if os(macOS)
+        self.navigationSubtitle(subtitle)
+        #elseif canImport(UIKit)
+        if #available(iOS 26.0, *) {
+            self.navigationSubtitle(subtitle)
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
     }
 }
 
@@ -177,21 +209,21 @@ enum PocketPicModalSize {
 
     var width: CGFloat {
         switch self {
-        case .export: 440
-        case .exportComplete: 420
+        case .export: 460
+        case .exportComplete: 440
         case .eyeDetection: 580
         case .albumPicker: 380
-        case .photoDetail: 760
+        case .photoDetail: 820
         }
     }
 
     var height: CGFloat {
         switch self {
-        case .export: 520
-        case .exportComplete: 540
+        case .export: 380
+        case .exportComplete: 460
         case .eyeDetection: 640
         case .albumPicker: 480
-        case .photoDetail: 680
+        case .photoDetail: 720
         }
     }
 }
@@ -201,7 +233,6 @@ extension View {
     func pocketPicModalPresentation(_ size: PocketPicModalSize) -> some View {
         #if os(macOS)
         frame(width: size.width, height: size.height)
-            .presentationSizing(.fitted)
         #elseif canImport(UIKit)
         switch size {
         case .export:

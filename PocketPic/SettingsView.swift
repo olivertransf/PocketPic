@@ -22,238 +22,179 @@ struct SettingsView: View {
     @State private var showingPermissionAlert = false
     
     var body: some View {
-        #if canImport(UIKit)
         NavigationStack {
-            Form {
-                Section {
-                    HStack {
-                        Text("Save to Album")
-                        Spacer()
-                        Button(selectedAlbum) {
-                            showingAlbumPicker = true
-                        }
-                        .foregroundStyle(Color.appAccent)
-                        .fontWeight(.medium)
-                    }
-                } header: {
-                    Text("Photo Storage")
-                } footer: {
-                    Text("Photos are saved to this album in your Photos library.")
-                }
-
-                Section {
-                    HStack {
-                        Text("Default Camera")
-                        Spacer()
-                        Picker("", selection: Binding(
-                            get: { photoStore.defaultCameraPosition },
-                            set: { photoStore.setDefaultCameraPosition($0) }
-                        )) {
-                            Text("Front").tag("front")
-                            Text("Back").tag("back")
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 140)
-                    }
-                } header: {
-                    Text("Camera")
-                } footer: {
-                    Text("Which camera opens when you start a session.")
-                }
-
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Overlay Opacity")
-                            Spacer()
-                            Text("\(Int(photoStore.overlayOpacity * 100))%")
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                                .font(.subheadline.monospacedDigit())
-                        }
-                        Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1)
-                            .tint(Color.appAccent)
-                            .onChange(of: photoStore.overlayOpacity) { _, newValue in
-                                photoStore.setOverlayOpacity(newValue)
-                            }
-                    }
-                    .padding(.vertical, 2)
-                } header: {
-                    Text("Camera Overlay")
-                } footer: {
-                    Text("How transparent the previous photo appears in the camera viewfinder.")
-                }
-
-                Section {
-                    Toggle(isOn: Binding(
-                        get: { photoStore.hidePhotosInGallery },
-                        set: { photoStore.setHidePhotosInGallery($0) }
-                    )) {
-                        Text("Hide Photos")
-                    }
-                    .tint(Color.appAccent)
-                } header: {
-                    Text("Privacy")
-                } footer: {
-                    Text("Gallery shows placeholders instead of your photos.")
-                }
-
-                Section {
-                    Toggle(isOn: Binding(
-                        get: { photoStore.useNativeResolution },
-                        set: { photoStore.setUseNativeResolution($0) }
-                    )) {
-                        Text("Native Resolution")
-                    }
-                    .tint(Color.appAccent)
-                } header: {
-                    Text("Export")
-                } footer: {
-                    Text("Exports at the camera's full sensor resolution using HEVC. Standard mode outputs 1080p H.264.")
-                }
-
-                Section {
-                    HStack {
-                        Text("Photos")
-                        Spacer()
-                        Text("\(photoStore.photos.count)")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    HStack {
-                        Text("Version")
-                        Spacer()
-                        Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
-                            .foregroundStyle(.secondary)
-                    }
-                    Button {
-                        if let url = URL(string: "itms-apps://itunes.apple.com/app/idYOUR_APP_ID?action=write-review") {
-                            UIApplication.shared.open(url)
-                        }
-                    } label: {
-                        HStack {
-                            Text("Rate PocketPic")
-                            Spacer()
-                            Image(systemName: "star.fill")
-                                .foregroundStyle(Color.appAccent)
-                        }
-                    }
-                    .foregroundStyle(.primary)
-                } header: {
-                    Text("About")
-                }
+            PocketPicSettingsForm {
+                storageSection
+                cameraSection
+                overlaySection
+                privacySection
+                exportSection
+                aboutSection
             }
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            #if canImport(UIKit)
+            .navigationBarTitleDisplayMode(.large)
+            #endif
             .tint(Color.appAccent)
             .onAppear {
                 selectedAlbum = photoStore.targetAlbum
                 loadAvailableAlbums()
             }
+            .onChange(of: showingAlbumPicker) { _, isShowing in
+                if isShowing {
+                    selectedAlbum = photoStore.targetAlbum
+                    loadAvailableAlbums()
+                }
+            }
             .sheet(isPresented: $showingAlbumPicker) {
-                AlbumPickerView(
-                    availableAlbums: availableAlbums,
-                    selectedAlbum: $selectedAlbum,
-                    isPresented: $showingAlbumPicker
-                )
+                NavigationStack {
+                    AlbumPickerView(
+                        availableAlbums: availableAlbums,
+                        selectedAlbum: $selectedAlbum,
+                        isPresented: $showingAlbumPicker
+                    )
+                    .environmentObject(photoStore)
+                }
+                #if canImport(UIKit)
+                .presentationDetents([.medium, .large])
+                .pocketPicSheetChrome()
+                #else
+                .pocketPicModalPresentation(.albumPicker)
+                #endif
             }
             .alert("Photos Permission Required", isPresented: $showingPermissionAlert) {
-                Button("Settings") {
-                    openAppSettings()
-                }
+                Button("Settings") { openAppSettings() }
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("Please grant photo library access in Settings to select custom albums.")
             }
         }
-        #elseif canImport(AppKit)
-        NavigationStack {
-            Form {
-                Section("Photo Storage") {
-                    LabeledContent("Save to Album") {
-                        Button(selectedAlbum) {
-                            showingAlbumPicker = true
-                        }
-                        .foregroundStyle(Color.appAccent)
-                        .fontWeight(.medium)
-                    }
-                }
-
-                Section("Camera") {
-                    Picker("Default Camera", selection: Binding(
-                        get: { photoStore.defaultCameraPosition },
-                        set: { photoStore.setDefaultCameraPosition($0) }
-                    )) {
-                        Text("Front").tag("front")
-                        Text("Back").tag("back")
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                Section("Camera Overlay") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Overlay Opacity")
-                            Spacer()
-                            Text("\(Int(photoStore.overlayOpacity * 100))%")
-                                .foregroundStyle(.secondary)
-                                .font(.subheadline.monospacedDigit())
-                        }
-                        Slider(value: $photoStore.overlayOpacity, in: 0.1...1.0, step: 0.1)
-                            .tint(Color.appAccent)
-                            .onChange(of: photoStore.overlayOpacity) { _, newValue in
-                                photoStore.setOverlayOpacity(newValue)
-                            }
-                    }
-                    .padding(.vertical, 2)
-                }
-
-                Section("Privacy") {
-                    Toggle("Hide Photos in Gallery", isOn: Binding(
-                        get: { photoStore.hidePhotosInGallery },
-                        set: { photoStore.setHidePhotosInGallery($0) }
-                    ))
-                    .tint(Color.appAccent)
-                }
-
-                Section("Export") {
-                    Toggle("Native Resolution", isOn: Binding(
-                        get: { photoStore.useNativeResolution },
-                        set: { photoStore.setUseNativeResolution($0) }
-                    ))
-                    .tint(Color.appAccent)
-                }
-
-                Section("About") {
-                    LabeledContent("Photos", value: "\(photoStore.photos.count)")
-                    LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
-                }
-            }
-            .formStyle(.grouped)
-            .navigationTitle("Settings")
-            .onAppear {
-                selectedAlbum = photoStore.targetAlbum
-                loadAvailableAlbums()
-            }
-            .sheet(isPresented: $showingAlbumPicker) {
-                AlbumPickerView(
-                    availableAlbums: availableAlbums,
-                    selectedAlbum: $selectedAlbum,
-                    isPresented: $showingAlbumPicker
-                )
-            }
-            .alert("Photos Permission Required", isPresented: $showingPermissionAlert) {
-                Button("Settings") {
-                    openAppSettings()
-                }
-                Button("Cancel", role: .cancel) { }
-            } message: {
-                Text("Please grant photo library access in Settings to select custom albums.")
-            }
-        }
-        #endif
     }
-    
+
+    @ViewBuilder
+    private var storageSection: some View {
+        Section {
+            LabeledContent("Save to Album") {
+                Button(selectedAlbum) { showingAlbumPicker = true }
+            }
+        } header: {
+            Text("Photo Storage")
+        } footer: {
+            Text("Photos are saved to this album in your Photos library.")
+        }
+    }
+
+    @ViewBuilder
+    private var cameraSection: some View {
+        Section {
+            #if os(macOS)
+            Picker("Default Camera", selection: Binding(
+                get: { photoStore.defaultCameraPosition },
+                set: { photoStore.setDefaultCameraPosition($0) }
+            )) {
+                Text("Front").tag("front")
+                Text("Back").tag("back")
+            }
+            .pickerStyle(.segmented)
+            #else
+            HStack {
+                Text("Default Camera")
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { photoStore.defaultCameraPosition },
+                    set: { photoStore.setDefaultCameraPosition($0) }
+                )) {
+                    Text("Front").tag("front")
+                    Text("Back").tag("back")
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+            }
+            #endif
+        } header: {
+            Text("Camera")
+        } footer: {
+            Text("Which camera opens when you start a session.")
+        }
+    }
+
+    @ViewBuilder
+    private var overlaySection: some View {
+        Section {
+            PocketPicSettingsSlider(
+                title: "Overlay Opacity",
+                value: $photoStore.overlayOpacity,
+                range: 0.1...1.0,
+                step: 0.1,
+                suffix: { "\(Int($0 * 100))%" }
+            )
+            .onChange(of: photoStore.overlayOpacity) { _, newValue in
+                photoStore.setOverlayOpacity(newValue)
+            }
+        } header: {
+            Text("Camera Overlay")
+        } footer: {
+            Text("How transparent the previous photo appears in the camera viewfinder.")
+        }
+    }
+
+    @ViewBuilder
+    private var privacySection: some View {
+        Section {
+            PocketPicSettingsToggle(
+                title: "Hide Photos",
+                subtitle: "Gallery shows placeholders instead of your photos.",
+                isOn: Binding(
+                    get: { photoStore.hidePhotosInGallery },
+                    set: { photoStore.setHidePhotosInGallery($0) }
+                )
+            )
+        } header: {
+            Text("Privacy")
+        }
+    }
+
+    @ViewBuilder
+    private var exportSection: some View {
+        Section {
+            PocketPicSettingsToggle(
+                title: "Native Resolution",
+                subtitle: "HEVC at full sensor resolution. Off uses 1080p H.264.",
+                isOn: Binding(
+                    get: { photoStore.useNativeResolution },
+                    set: { photoStore.setUseNativeResolution($0) }
+                )
+            )
+        } header: {
+            Text("Export")
+        }
+    }
+
+    @ViewBuilder
+    private var aboutSection: some View {
+        Section {
+            LabeledContent("Photos", value: "\(photoStore.photos.count)")
+            LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+            #if canImport(UIKit)
+            Button {
+                if let url = URL(string: "itms-apps://itunes.apple.com/app/idYOUR_APP_ID?action=write-review") {
+                    UIApplication.shared.open(url)
+                }
+            } label: {
+                HStack {
+                    Text("Rate PocketPic")
+                    Spacer()
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .foregroundStyle(.primary)
+            #endif
+        } header: {
+            Text("About")
+        }
+    }
+
     private func loadAvailableAlbums() {
         #if canImport(UIKit)
         let status = PHPhotoLibrary.authorizationStatus()
@@ -307,7 +248,7 @@ struct SettingsView: View {
         let fetchOptions = PHFetchOptions()
         fetchOptions.sortDescriptors = [NSSortDescriptor(key: "title", ascending: true)]
         
-        let albums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .any, options: fetchOptions)
+        let albums = PHAssetCollection.fetchAssetCollections(with: .album, subtype: .albumRegular, options: fetchOptions)
         var seen = Set<String>()
         var albumNames: [String] = []
         
@@ -355,90 +296,92 @@ struct AlbumPickerView: View {
 
     var body: some View {
         #if canImport(UIKit)
-        NavigationStack {
-            List {
-                Section {
-                    Button {
-                        newAlbumName = ""
-                        showNewAlbumAlert = true
-                    } label: {
-                        Label("New Album", systemImage: "plus.circle.fill")
-                            .foregroundStyle(Color.appAccent)
-                            .fontWeight(.medium)
-                    }
+        List {
+            Section {
+                Button {
+                    newAlbumName = ""
+                    showNewAlbumAlert = true
+                } label: {
+                    Label("New Album", systemImage: "plus.circle.fill")
                 }
+            }
 
-                Section("My Albums") {
-                    ForEach(albums, id: \.self) { album in
+            Section("My Albums") {
+                ForEach(albums, id: \.self) { album in
+                    Button {
+                        selectedAlbum = album
+                        photoStore.setTargetAlbum(album)
+                        isPresented = false
+                    } label: {
                         HStack {
                             Image(systemName: "photo.on.rectangle")
                                 .foregroundStyle(.secondary)
                                 .frame(width: 20)
                             Text(album)
                                 .font(.body)
+                                .foregroundStyle(.primary)
                             Spacer()
                             if selectedAlbum == album {
                                 Image(systemName: "checkmark")
-                                    .foregroundColor(.appAccent)
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .fontWeight(.semibold)
                             }
                         }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            selectedAlbum = album
-                            photoStore.setTargetAlbum(album)
-                            isPresented = false
-                        }
                     }
+                    .buttonStyle(.plain)
                 }
             }
-            .navigationTitle("Select Album")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
-                }
-            }
-            .alert("New Album", isPresented: $showNewAlbumAlert) {
-                TextField("Album Name", text: $newAlbumName)
-                Button("Cancel", role: .cancel) {}
-                Button("Create") { createAlbum() }
-            } message: {
-                Text("Enter a name for the new Photos album.")
-            }
-            .alert("Error", isPresented: .constant(errorMessage != nil)) {
-                Button("OK") { errorMessage = nil }
-            } message: {
-                if let msg = errorMessage { Text(msg) }
-            }
-            .overlay {
-                if isCreating {
-                    ZStack {
-                        Color.black.opacity(0.3).ignoresSafeArea()
-                        ProgressView("Creating…")
-                            .padding(24)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-                    }
-                }
-            }
-            .onAppear { albums = availableAlbums }
         }
-        .pocketPicModalPresentation(.albumPicker)
+        .navigationTitle("Select Album")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { isPresented = false }
+            }
+        }
+        .alert("New Album", isPresented: $showNewAlbumAlert) {
+            TextField("Album Name", text: $newAlbumName)
+            Button("Cancel", role: .cancel) {}
+            Button("Create") { createAlbum() }
+        } message: {
+            Text("Enter a name for the new Photos album.")
+        }
+        .alert("Error", isPresented: .constant(errorMessage != nil)) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            if let msg = errorMessage { Text(msg) }
+        }
+        .overlay {
+            if isCreating {
+                ZStack {
+                    Color.black.opacity(0.3).ignoresSafeArea()
+                    ProgressView("Creating…")
+                        .padding(24)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                }
+            }
+        }
+        .onAppear { albums = availableAlbums }
+        .onChange(of: availableAlbums) { _, updated in
+            albums = updated
+        }
         #elseif canImport(AppKit)
-        NavigationStack {
-            List {
+        List {
+            Section {
                 Button {
                     newAlbumName = ""
                     showNewAlbumAlert = true
                 } label: {
                     Label("New Album", systemImage: "plus.circle.fill")
-                        .foregroundStyle(Color.appAccent)
-                        .fontWeight(.medium)
                 }
-                .buttonStyle(.plain)
+            }
 
-                Section("My Albums") {
-                    ForEach(albums, id: \.self) { album in
+            Section("My Albums") {
+                ForEach(albums, id: \.self) { album in
+                    Button {
+                        selectedAlbum = album
+                        photoStore.setTargetAlbum(album)
+                        isPresented = false
+                    } label: {
                         HStack {
                             Image(systemName: "photo.on.rectangle")
                                 .foregroundStyle(.secondary)
@@ -447,36 +390,47 @@ struct AlbumPickerView: View {
                             Spacer()
                             if selectedAlbum == album {
                                 Image(systemName: "checkmark")
-                                    .foregroundColor(.appAccent)
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .fontWeight(.semibold)
                             }
                         }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            selectedAlbum = album
-                            photoStore.setTargetAlbum(album)
-                            isPresented = false
-                        }
                     }
+                    .buttonStyle(.plain)
                 }
             }
-            .navigationTitle("Select Album")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { isPresented = false }
-                        .keyboardShortcut(.escape)
-                }
-            }
-            .alert("New Album", isPresented: $showNewAlbumAlert) {
-                TextField("Album Name", text: $newAlbumName)
-                Button("Cancel", role: .cancel) {}
-                Button("Create") { createAlbum() }
-            } message: {
-                Text("Enter a name for the new Photos album.")
-            }
-            .onAppear { albums = availableAlbums }
         }
-        .pocketPicModalPresentation(.albumPicker)
+        .navigationTitle("Select Album")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { isPresented = false }
+                    .keyboardShortcut(.escape)
+            }
+        }
+        .alert("New Album", isPresented: $showNewAlbumAlert) {
+            TextField("Album Name", text: $newAlbumName)
+            Button("Cancel", role: .cancel) {}
+            Button("Create") { createAlbum() }
+        } message: {
+            Text("Enter a name for the new Photos album.")
+        }
+        .alert("Error", isPresented: .constant(errorMessage != nil)) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            if let msg = errorMessage { Text(msg) }
+        }
+        .overlay {
+            if isCreating {
+                ZStack {
+                    Color.black.opacity(0.3).ignoresSafeArea()
+                    ProgressView("Creating…")
+                        .padding(24)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                }
+            }
+        }
+        .onAppear { albums = availableAlbums }
+        .onChange(of: availableAlbums) { _, updated in
+            albums = updated
+        }
         #endif
     }
 

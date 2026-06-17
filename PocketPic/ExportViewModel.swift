@@ -17,10 +17,10 @@ import AppKit
 import PhotosUI
 #endif
 
-private enum ExportProgressWeight {
-    static let loading: Double = 0.12
-    static let encoding: Double = 0.86
-    static let finishing: Double = 0.02
+private enum ExportProgressPhase {
+    static let prepareEnd = 0.05
+    static let framesEnd = 0.97
+    static let writeEnd = 0.99
 }
 
 private struct EyeReferenceInVideo {
@@ -48,10 +48,13 @@ class ExportViewModel: ObservableObject {
     let availableFPSOptions = [5, 10, 15, 24, 30, 60]
 
     private func setExportProgress(_ value: Double, status: String) {
-        exportProgress = min(max(value, 0), 1)
+        let clamped = min(max(value, 0), 1)
+        if clamped >= exportProgress {
+            exportProgress = clamped
+        }
         exportStatus = status
     }
-    
+
     func exportVideo(photos: [Photo], photoStore: PhotoStore) async {
         guard !photos.isEmpty else {
             errorMessage = "No photos to export"
@@ -62,7 +65,8 @@ class ExportViewModel: ObservableObject {
         completedExport = nil
         exportedVideoURL = nil
         exportPreviewImage = nil
-        setExportProgress(0, status: "Starting export…")
+        exportProgress = 0
+        setExportProgress(0.02, status: "Starting export…")
 
         await Task.yield()
 
@@ -93,8 +97,11 @@ class ExportViewModel: ObservableObject {
         }
 
         do {
-            let loadingWeight = ExportProgressWeight.loading
-            let encodingWeight = ExportProgressWeight.encoding
+            let progressHandler: @Sendable (Double, String) -> Void = { [weak self] progress, status in
+                DispatchQueue.main.async {
+                    self?.setExportProgress(progress, status: status)
+                }
+            }
 
             let tempURL = try await Task.detached(priority: .userInitiated) {
                 try await ExportViewModel.encodeVideo(
@@ -102,16 +109,11 @@ class ExportViewModel: ObservableObject {
                     fps: fps,
                     alignEyes: shouldAlignEyes,
                     useNativeResolution: useNative,
-                    onProgress: { encodeProgress, status in
-                        let overall = loadingWeight + (encodeProgress * encodingWeight)
-                        Task { @MainActor [weak self] in
-                            self?.setExportProgress(overall, status: status)
-                        }
-                    }
+                    onProgress: progressHandler
                 )
             }.value
 
-            setExportProgress(loadingWeight + encodingWeight, status: "Saving export…")
+            setExportProgress(0.98, status: "Saving export…")
             await Task.yield()
 
             let videoURL = try await Task.detached(priority: .utility) {
@@ -146,7 +148,7 @@ class ExportViewModel: ObservableObject {
             throw NSError(domain: "PocketPic", code: -1, userInfo: [NSLocalizedDescriptionKey: "No frames to export"])
         }
 
-        onProgress(0.04, "Analyzing photos…")
+        onProgress(0.02, "Analyzing photos…")
         let pixelSizes = frameRefs.compactMap { ExportFrameLoader.pixelSize(for: $0) }
         let (videoSize, useHEVC, bitrate) = computeVideoSize(
             from: pixelSizes,
@@ -156,7 +158,7 @@ class ExportViewModel: ObservableObject {
             videoSize: videoSize,
             useNativeResolution: useNativeResolution
         )
-        onProgress(0.08, "Preparing video…")
+        onProgress(ExportProgressPhase.prepareEnd, "Preparing video…")
 
         let videoWidth = Int(videoSize.width)
         let videoHeight = Int(videoSize.height)
@@ -200,22 +202,29 @@ class ExportViewModel: ObservableObject {
         videoWriter.startSession(atSourceTime: .zero)
 
         let referenceEyes: EyeReferenceInVideo? = alignEyes
-            ? await canonicalEyeTargetsInVideo(
+            ? await referenceEyesFromFirstPhoto(
+                firstRef: frameRefs[0],
                 videoSize: videoSize,
-                frameRefs: frameRefs,
-                useNativeResolution: useNativeResolution
+                maxDecodePixel: maxDecodePixel
             )
             : nil
 
+        let frameSpan = ExportProgressPhase.framesEnd - ExportProgressPhase.prepareEnd
         var frameCount: Int64 = 0
 
         for (index, ref) in frameRefs.enumerated() {
-            let loadProgress = 0.08 + (0.12 * Double(index) / Double(imageCount))
-            onProgress(loadProgress, "Loading frame \(index + 1) of \(imageCount)")
+            let slotMid = ExportProgressPhase.prepareEnd
+                + frameSpan * (Double(index) + 0.25) / Double(imageCount)
+            let slotEnd = ExportProgressPhase.prepareEnd
+                + frameSpan * Double(index + 1) / Double(imageCount)
+
+            onProgress(slotMid, "Loading frame \(index + 1) of \(imageCount)")
 
             guard let image = await ExportFrameLoader.loadFrame(ref, maxPixelDimension: maxDecodePixel) else {
+                onProgress(slotEnd, "Skipped frame \(index + 1) of \(imageCount)")
                 continue
             }
+            let normalized = exportReadyImage(image)
 
             autoreleasepool {
                 let presentationTime = CMTime(value: frameCount, timescale: fpsScale)
@@ -226,21 +235,21 @@ class ExportViewModel: ObservableObject {
                 let result: CVPixelBuffer?
                 if alignEyes {
                     result = makeAlignedPixelBuffer(
-                        from: image,
+                        from: normalized,
                         size: videoSize,
                         referenceEyes: referenceEyes
                     )
                 } else {
-                    result = makePixelBuffer(from: image, size: videoSize)
+                    result = makePixelBuffer(from: normalized, size: videoSize)
                 }
 
                 if let pb = result {
                     adaptor.append(pb, withPresentationTime: presentationTime)
                     frameCount += 1
-                    let encodeProgress = 0.2 + (0.77 * Double(frameCount) / Double(imageCount))
-                    onProgress(encodeProgress, "Processing frame \(frameCount) of \(imageCount)")
                 }
             }
+
+            onProgress(slotEnd, "Processing frame \(index + 1) of \(imageCount)")
         }
 
         guard frameCount > 0 else {
@@ -248,7 +257,7 @@ class ExportViewModel: ObservableObject {
         }
 
         videoWriterInput.markAsFinished()
-        onProgress(0.98, "Writing video…")
+        onProgress(ExportProgressPhase.writeEnd, "Writing video…")
         await videoWriter.finishWriting()
 
         guard videoWriter.status == .completed else {
@@ -308,60 +317,74 @@ class ExportViewModel: ObservableObject {
         return (CGSize(width: 1080, height: 1920), false, 8_000_000)
     }
 
+    nonisolated private static func exportReadyImage(_ image: PlatformImage) -> PlatformImage {
+        image.normalizedUpOrientation()
+    }
+
     nonisolated private static func canonicalPixelSize(for image: PlatformImage) -> CGSize? {
+        let ready = exportReadyImage(image)
         #if canImport(UIKit)
-        guard let cgImage = image.cgImage else { return nil }
+        guard let cgImage = ready.cgImage else { return nil }
         return CGSize(width: cgImage.width, height: cgImage.height)
         #elseif canImport(AppKit)
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        guard let cgImage = ready.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         return CGSize(width: cgImage.width, height: cgImage.height)
         #endif
     }
 
-    /// Fixed eye positions in the output frame (UIKit top-left coordinates).
-    nonisolated private static func canonicalEyeTargetsInVideo(
+    nonisolated private static func mapEyePointToRect(
+        _ point: CGPoint,
+        imageSize: CGSize,
+        drawRect: CGRect
+    ) -> CGPoint {
+        guard imageSize.width > 0, imageSize.height > 0 else { return point }
+        return CGPoint(
+            x: drawRect.minX + (point.x / imageSize.width) * drawRect.width,
+            y: drawRect.minY + (point.y / imageSize.height) * drawRect.height
+        )
+    }
+
+    /// Eye positions from the first photo in video space — used as the scale/position target for all frames.
+    nonisolated private static func referenceEyesFromFirstPhoto(
+        firstRef: ExportFrameRef,
         videoSize: CGSize,
-        frameRefs: [ExportFrameRef],
-        useNativeResolution: Bool
+        maxDecodePixel: CGFloat
     ) async -> EyeReferenceInVideo? {
-        let landscape = frameRefs.filter { ref in
-            guard let size = ExportFrameLoader.pixelSize(for: ref) else { return false }
-            return size.width > size.height
+        guard let image = await ExportFrameLoader.loadFrame(firstRef, maxPixelDimension: maxDecodePixel) else {
+            return nil
         }
-        let candidates = landscape.isEmpty ? frameRefs : landscape
+        return eyeReferenceInVideo(for: exportReadyImage(image), videoSize: videoSize)
+    }
 
-        let midX = videoSize.width * 0.5
-        var midY = videoSize.height * 0.36
-        var spacing = videoSize.width * 0.22
-
-        let eyeScanMax = ExportFrameLoader.maxDecodePixelDimension(
-            videoSize: videoSize,
-            useNativeResolution: useNativeResolution
-        )
-
-        for ref in candidates {
-            guard let image = await ExportFrameLoader.loadFrame(ref, maxPixelDimension: eyeScanMax),
-                  let eyes = try? EyeDetectionService.detectEyes(in: image),
-                  eyes.imageSize.width > 0,
-                  eyes.imageSize.height > 0 else {
-                continue
-            }
-            let orientedSize = eyes.imageSize
-            let left = eyes.leftEye
-            let right = eyes.rightEye
-            let eyeMid = CGPoint(x: (left.x + right.x) * 0.5, y: (left.y + right.y) * 0.5)
-            midY = (eyeMid.y / orientedSize.height) * videoSize.height
-            let imageSpacing = hypot(right.x - left.x, right.y - left.y)
-            if imageSpacing > 1 {
-                spacing = videoSize.width * (imageSpacing / orientedSize.width)
-            }
-            break
+    nonisolated private static func eyeReferenceInVideo(
+        for normalized: PlatformImage,
+        videoSize: CGSize
+    ) -> EyeReferenceInVideo? {
+        guard let eyes = try? EyeDetectionService.detectEyes(in: normalized),
+              let imagePixelSize = canonicalPixelSize(for: normalized),
+              eyes.imageSize.width > 0,
+              eyes.imageSize.height > 0 else {
+            return nil
         }
 
-        return EyeReferenceInVideo(
-            left: CGPoint(x: midX - spacing * 0.5, y: midY),
-            right: CGPoint(x: midX + spacing * 0.5, y: midY)
-        )
+        let fitted = aspectFitDrawRectTopLeft(imagePixelSize: imagePixelSize, videoSize: videoSize)
+        let left = mapEyePointToRect(eyes.leftEye, imageSize: eyes.imageSize, drawRect: fitted)
+        let right = mapEyePointToRect(eyes.rightEye, imageSize: eyes.imageSize, drawRect: fitted)
+        return EyeReferenceInVideo(left: left, right: right)
+    }
+
+    nonisolated private static func eyesInVideoSpace(
+        for normalized: PlatformImage,
+        videoSize: CGSize
+    ) -> (left: CGPoint, right: CGPoint, fitted: CGRect)? {
+        guard let eyes = try? EyeDetectionService.detectEyes(in: normalized),
+              let imagePixelSize = canonicalPixelSize(for: normalized) else {
+            return nil
+        }
+        let fitted = aspectFitDrawRectTopLeft(imagePixelSize: imagePixelSize, videoSize: videoSize)
+        let left = mapEyePointToRect(eyes.leftEye, imageSize: eyes.imageSize, drawRect: fitted)
+        let right = mapEyePointToRect(eyes.rightEye, imageSize: eyes.imageSize, drawRect: fitted)
+        return (left, right, fitted)
     }
 
     nonisolated private static func aspectFitDrawRectTopLeft(
@@ -375,10 +398,11 @@ class ExportViewModel: ObservableObject {
     }
 
     nonisolated private static func makePixelBuffer(from image: PlatformImage, size: CGSize) -> CVPixelBuffer? {
-        guard let imagePixelSize = canonicalPixelSize(for: image) else { return nil }
+        let normalized = exportReadyImage(image)
+        guard let imagePixelSize = canonicalPixelSize(for: normalized) else { return nil }
         let fitted = aspectFitDrawRectTopLeft(imagePixelSize: imagePixelSize, videoSize: size)
-        return renderFrameImage(image, videoSize: size, drawImage: { context, _ in
-            drawPlatformImage(image, in: fitted, context: context)
+        return renderFrameImage(normalized, videoSize: size, drawImage: { context, _ in
+            drawPlatformImage(normalized, in: fitted, context: context)
         })
     }
 
@@ -387,83 +411,51 @@ class ExportViewModel: ObservableObject {
         size: CGSize,
         referenceEyes: EyeReferenceInVideo?
     ) -> CVPixelBuffer? {
-        guard let imagePixelSize = canonicalPixelSize(for: image) else {
-            return makePixelBuffer(from: image, size: size)
-        }
-
+        let normalized = exportReadyImage(image)
         guard let referenceEyes,
-              let eyes = try? EyeDetectionService.detectEyes(in: image) else {
-            return makePixelBuffer(from: image, size: size)
+              let detected = eyesInVideoSpace(for: normalized, videoSize: size) else {
+            return makePixelBuffer(from: normalized, size: size)
         }
 
-        let drawSize = eyes.imageSize
         let warpTransform = similarityTransform(
-            from: eyes.leftEye,
-            eyes.rightEye,
+            from: detected.left,
+            detected.right,
             to: referenceEyes.left,
             referenceEyes.right
         )
 
-        return renderFrameImage(image, videoSize: size) { context, videoSize in
+        return renderFrameImage(normalized, videoSize: size) { context, videoSize in
             context.saveGState()
             context.clip(to: CGRect(origin: .zero, size: videoSize))
             context.concatenate(warpTransform)
-            drawPlatformImage(image, in: CGRect(origin: .zero, size: drawSize), context: context)
+            drawPlatformImage(normalized, in: detected.fitted, context: context)
             context.restoreGState()
         }
     }
 
     #if canImport(UIKit)
-    nonisolated private static func renderTopLeftCGImage(
-        videoSize: CGSize,
-        drawImage: (CGContext, CGSize) -> Void
-    ) -> CGImage? {
-        let width = Int(videoSize.width)
-        let height = Int(videoSize.height)
-        guard width > 0, height > 0,
-              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-              ) else {
-            return nil
-        }
-
-        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
-        context.fill(CGRect(origin: .zero, size: videoSize))
-
-        context.saveGState()
-        context.translateBy(x: 0, y: videoSize.height)
-        context.scaleBy(x: 1, y: -1)
-        drawImage(context, videoSize)
-        context.restoreGState()
-
-        return context.makeImage()
-    }
-
     nonisolated private static func renderFrameImage(
         _ image: UIImage,
         videoSize: CGSize,
         drawImage: (CGContext, CGSize) -> Void
     ) -> CVPixelBuffer? {
-        guard let frameImage = renderTopLeftCGImage(videoSize: videoSize, drawImage: drawImage) else {
-            return nil
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: videoSize, format: format)
+        let frameImage = renderer.image { rendererContext in
+            UIColor.black.setFill()
+            rendererContext.fill(CGRect(origin: .zero, size: videoSize))
+            drawImage(rendererContext.cgContext, videoSize)
         }
-        return drawIntoPixelBuffer(videoSize: videoSize) { bufferContext in
-            bufferContext.translateBy(x: 0, y: videoSize.height)
-            bufferContext.scaleBy(x: 1, y: -1)
-            bufferContext.draw(frameImage, in: CGRect(origin: .zero, size: videoSize))
-        }
+        guard let cgImage = frameImage.cgImage else { return nil }
+        return copyCGImageIntoPixelBuffer(cgImage, videoSize: videoSize)
     }
 
     nonisolated private static func drawPlatformImage(_ image: UIImage, in rect: CGRect, context: CGContext) {
-        guard let cgImage = image.cgImage else { return }
-        context.draw(cgImage, in: rect)
+        UIGraphicsPushContext(context)
+        image.draw(in: rect)
+        UIGraphicsPopContext()
     }
     #elseif canImport(AppKit)
     nonisolated private static func renderFrameImage(
@@ -494,11 +486,7 @@ class ExportViewModel: ObservableObject {
         NSGraphicsContext.restoreGraphicsState()
 
         guard let cgImage = rep.cgImage else { return nil }
-        return drawIntoPixelBuffer(videoSize: videoSize) { bufferContext in
-            bufferContext.translateBy(x: 0, y: videoSize.height)
-            bufferContext.scaleBy(x: 1, y: -1)
-            bufferContext.draw(cgImage, in: CGRect(origin: .zero, size: videoSize))
-        }
+        return copyCGImageIntoPixelBuffer(cgImage, videoSize: videoSize)
     }
 
     nonisolated private static func drawPlatformImage(_ image: NSImage, in rect: CGRect, context: CGContext) {
@@ -506,19 +494,6 @@ class ExportViewModel: ObservableObject {
         image.draw(in: rect)
     }
     #endif
-
-    nonisolated private static func scaledEyePoint(
-        _ point: CGPoint,
-        from sourceSize: CGSize,
-        to targetSize: CGSize
-    ) -> CGPoint {
-        guard sourceSize.width > 0, sourceSize.height > 0 else { return point }
-        guard sourceSize != targetSize else { return point }
-        return CGPoint(
-            x: point.x * targetSize.width / sourceSize.width,
-            y: point.y * targetSize.height / sourceSize.height
-        )
-    }
 
     nonisolated private static func similarityTransform(
         from sourceLeft: CGPoint,
@@ -553,6 +528,22 @@ class ExportViewModel: ObservableObject {
             .concatenating(CGAffineTransform(translationX: targetLeft.x, y: targetLeft.y))
     }
 
+
+    nonisolated private static func copyCGImageIntoPixelBuffer(
+        _ cgImage: CGImage,
+        videoSize: CGSize
+    ) -> CVPixelBuffer? {
+        drawIntoPixelBuffer(videoSize: videoSize) { context in
+            #if canImport(UIKit)
+            // UIGraphicsImageRenderer output is already top-left; AVFoundation expects that layout.
+            context.draw(cgImage, in: CGRect(origin: .zero, size: videoSize))
+            #else
+            context.translateBy(x: 0, y: videoSize.height)
+            context.scaleBy(x: 1, y: -1)
+            context.draw(cgImage, in: CGRect(origin: .zero, size: videoSize))
+            #endif
+        }
+    }
 
     nonisolated private static func drawIntoPixelBuffer(
         videoSize: CGSize,

@@ -19,6 +19,37 @@ import AppKit
 import UIKit
 #endif
 
+private enum PhotoAspectRatioReader {
+    nonisolated static func aspectRatio(filename: String, photosDirectory: URL) -> CGFloat? {
+        let imageURL = photosDirectory.appendingPathComponent(filename)
+        if FileManager.default.fileExists(atPath: imageURL.path) {
+            return aspectRatioFromImageFile(at: imageURL)
+        }
+        guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [filename], options: nil).firstObject else {
+            return nil
+        }
+        let width = CGFloat(asset.pixelWidth)
+        let height = CGFloat(asset.pixelHeight)
+        guard width > 0, height > 0 else { return nil }
+        return width / height
+    }
+
+    nonisolated static func aspectRatioFromImageFile(at url: URL) -> CGFloat? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return nil
+        }
+        var width = properties[kCGImagePropertyPixelWidth] as? CGFloat ?? 0
+        var height = properties[kCGImagePropertyPixelHeight] as? CGFloat ?? 0
+        if let orientation = properties[kCGImagePropertyOrientation] as? UInt32,
+           (5 ... 8).contains(orientation) {
+            swap(&width, &height)
+        }
+        guard width > 0, height > 0 else { return nil }
+        return width / height
+    }
+}
+
 private enum ThumbnailDecode {
     nonisolated static func downsampleImage(at url: URL, maxPixelDimension: CGFloat) -> PlatformImage? {
         let options: [CFString: Any] = [
@@ -70,6 +101,7 @@ class PhotoStore: ObservableObject {
 
     // Tracks in-flight PHImageManager requests so we can cancel them.
     private var imageRequestIDs: [String: PHImageRequestID] = [:]
+    private var aspectRatioCache: [String: CGFloat] = [:]
 
     private let photosDirectory: URL
     private let metadataURL: URL
@@ -280,6 +312,22 @@ class PhotoStore: ObservableObject {
         if FileManager.default.fileExists(atPath: imageURL.path) { return true }
         return PHAsset.fetchAssets(withLocalIdentifiers: [photo.filename], options: nil).firstObject != nil
     }
+
+    func aspectRatio(for photo: Photo) async -> CGFloat {
+        let cacheKey = photo.id.uuidString
+        if let cached = aspectRatioCache[cacheKey] {
+            return cached
+        }
+
+        let directory = photosDirectory
+        let filename = photo.filename
+        let ratio = await Task.detached(priority: .utility) {
+            PhotoAspectRatioReader.aspectRatio(filename: filename, photosDirectory: directory) ?? 1
+        }.value
+
+        aspectRatioCache[cacheKey] = ratio
+        return ratio
+    }
     
     func loadThumbnail(for photo: Photo, pointWidth: CGFloat, displayScale: CGFloat) async -> PlatformImage? {
         // Cap at 400 logical points × scale — enough for a 3-column grid at 3× retina.
@@ -328,9 +376,9 @@ class PhotoStore: ObservableObject {
             return await Task.detached(priority: .userInitiated) {
                 guard let data = try? Data(contentsOf: imageURL) else { return nil as PlatformImage? }
                 #if canImport(UIKit)
-                return UIImage(data: data)
+                return UIImage(data: data)?.normalizedUpOrientation()
                 #else
-                return NSImage(data: data)
+                return NSImage(data: data)?.normalizedUpOrientation()
                 #endif
             }.value
         }
