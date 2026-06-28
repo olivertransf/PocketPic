@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="PocketPic is a daily photo journal for iOS and Mac. Capture one photo per day with alignment overlays, then export a time-lapse montage with optional eye alignment.">
+  <meta name="apple-itunes-app" content="app-id=0000000000">
+  <title>PocketPic — Daily Photo Journal & Time-Lapse</title>
+  <link rel="icon" href="images/favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="images/app-icon.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a href="index.html" class="logo">
+        <img src="images/app-icon.png" alt="" width="32" height="32">
+        PocketPic
+      </a>
+      <button class="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M4 7h16M4 12h16M4 17h16"/>
+        </svg>
+      </button>
+      <nav class="nav" aria-label="Main">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How It Works</a>
+        <a href="support.html">Support</a>
+        <a href="privacy.html">Privacy</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container">
+        <img class="hero-icon" src="images/app-icon.png" alt="PocketPic app icon" width="120" height="120">
+        <h1>One photo a day.<br>Watch yourself change.</h1>
+        <p class="tagline">A daily photo journal with alignment overlays and one-tap time-lapse export. Built for iPhone, iPad, and Mac.</p>
+        <div class="hero-cta">
+          <a href="https://apps.apple.com/app/pocketpic/id0000000000" aria-label="Download on the App Store">
+            <img class="app-store-badge" src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83" alt="Download on the App Store" width="250" height="83">
+          </a>
+        </div>
+        <p class="platform-note">Available for iOS 18+ and macOS 15+</p>
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="container">
+        <p class="section-label">Features</p>
+        <h2 class="section-title">Everything you need for a daily photo project</h2>
+        <p class="section-intro">PocketPic keeps the workflow simple: shoot, review, and export. No accounts, no cloud uploads — your photos stay in your library.</p>
+        <div class="feature-grid">
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">📷</div>
+            <h3>Daily capture</h3>
+            <p>Take one photo per day with a full-screen camera. On Mac, snap a quick shot from the menu bar without opening the full app.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">👻</div>
+            <h3>Alignment overlay</h3>
+            <p>Your previous photo ghosts over the viewfinder with adjustable opacity so you can match framing, pose, and angle every day.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">🎬</div>
+            <h3>Time-lapse export</h3>
+            <p>Turn your photo series into an H.264 or HEVC montage video. Choose frame rate (5–60 fps), resolution, and save to Photos, Files, or Share.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">👁</div>
+            <h3>Eye alignment</h3>
+            <p>Optional on-device Vision analysis aligns position, rotation, and scale across frames so your face stays centered in the final video.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">🖼</div>
+            <h3>Photo library</h3>
+            <p>Browse photos in a month-grouped mosaic. Track your current and longest streak. Zoom into full-screen detail view.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon" aria-hidden="true">🔒</div>
+            <h3>Privacy mode</h3>
+            <p>Hide thumbnails in the in-app gallery with neutral placeholders — your photos stay in the Photos app, untouched.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="how-it-works" class="alt">
+      <div class="container">
+        <p class="section-label">How it works</p>
+        <h2 class="section-title">Three steps to your time-lapse</h2>
+        <div class="steps">
+          <div class="step">
+            <h3>Capture daily</h3>
+            <p>Open the camera, line up with yesterday's overlay, and save one photo to your PocketPic album.</p>
+          </div>
+          <div class="step">
+            <h3>Build your streak</h3>
+            <p>Review your library, track streaks, and select or delete photos as your project grows.</p>
+          </div>
+          <div class="step">
+            <h3>Export video</h3>
+            <p>Generate a montage with optional eye alignment. Share your transformation anywhere.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="container" style="text-align: center;">
+        <p class="section-label">Platforms</p>
+        <h2 class="section-title">Native on Apple devices</h2>
+        <p class="section-intro" style="margin-inline: auto;">SwiftUI app built with AVFoundation for camera and export, PhotoKit for library sync, and Vision for on-device face alignment.</p>
+        <div class="platforms">
+          <span class="platform-pill">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+            iPhone & iPad
+          </span>
+          <span class="platform-pill">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zm0 2v8h16V7H4zm2 12h12v2H6v-2z"/></svg>
+            Mac menu bar + app
+          </span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <nav class="footer-links" aria-label="Footer">
+        <a href="privacy.html">Privacy Policy</a>
+        <a href="support.html">Support</a>
+        <a href="https://github.com/olivertransf/PocketPic">GitHub</a>
+      </nav>
+      <p class="footer-copy">&copy; 2026 Oliver Tran. MIT License.</p>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>
