@@ -209,7 +209,8 @@ section.alt {
 .section-title {
   font-size: 32px;
   font-weight: 600;
-  margin: 0 0 16px;
+  margin: 0 0 24px;
+  text-align: left;
 }
 
 .section-intro {
@@ -218,6 +219,7 @@ section.alt {
   max-width: 600px;
   margin: 0 0 32px;
   line-height: 1.6;
+  text-align: left;
 }
 
 /* Features */
