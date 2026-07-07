@@ -1,23 +1,17 @@
 :root {
   --accent: #007aff;
-  --accent-hover: #0a84ff;
-  --bg: #ffffff;
-  --bg-alt: #f9f9f9;
   --text: #000000;
-  --text-secondary: #666666;
+  --text-light: #666666;
+  --bg: #ffffff;
   --border: #e5e5e5;
-  --font-serif: 'Georgia', 'Garamond', serif;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --accent: #0a84ff;
-    --accent-hover: #409cff;
-    --bg: #000000;
-    --bg-alt: #0f0f0f;
     --text: #ffffff;
-    --text-secondary: #999999;
+    --text-light: #999999;
+    --bg: #000000;
     --border: #2a2a2a;
   }
 }
@@ -34,7 +28,7 @@ html {
 
 body {
   margin: 0;
-  font-family: var(--font-sans);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 16px;
   line-height: 1.6;
   color: var(--text);
@@ -57,7 +51,7 @@ a:hover {
 }
 
 .container {
-  width: min(100% - 40px, var(--max-width));
+  width: min(100% - 32px, 900px);
   margin-inline: auto;
 }
 
@@ -125,35 +119,30 @@ a:hover {
 /* Hero */
 
 .hero {
-  background: var(--bg);
-  padding: 120px 0;
+  padding: 60px 0;
   text-align: center;
 }
 
 .hero-icon {
-  width: 96px;
-  height: 96px;
-  margin: 0 auto 40px;
-  border-radius: 24px;
-  box-shadow: none;
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 24px;
+  border-radius: 20px;
 }
 
 .hero h1 {
-  font-family: var(--font-serif);
-  font-size: 56px;
-  font-weight: 400;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
-  margin: 0 0 24px;
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.2;
+  margin: 0 0 16px;
 }
 
 .hero .tagline {
-  font-size: 18px;
-  color: var(--text-secondary);
+  font-size: 16px;
+  color: var(--text-light);
   max-width: 500px;
-  margin: 0 auto 48px;
-  font-weight: 400;
-  line-height: 1.7;
+  margin: 0 auto 32px;
+  line-height: 1.6;
 }
 
 .hero-cta {
@@ -201,11 +190,11 @@ a:hover {
 /* Sections */
 
 section {
-  padding: 64px 0;
+  padding: 48px 0;
 }
 
 section.alt {
-  background: var(--bg-alt);
+  background: var(--bg);
 }
 
 .section-label {
@@ -213,71 +202,63 @@ section.alt {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-secondary);
-  margin-bottom: 16px;
+  color: var(--text-light);
+  margin-bottom: 12px;
 }
 
 .section-title {
-  font-family: var(--font-serif);
-  font-size: 40px;
-  font-weight: 400;
-  letter-spacing: -0.01em;
-  margin: 0 0 20px;
+  font-size: 32px;
+  font-weight: 600;
+  margin: 0 0 16px;
 }
 
 .section-intro {
-  font-size: 16px;
-  color: var(--text-secondary);
+  font-size: 15px;
+  color: var(--text-light);
   max-width: 600px;
-  margin: 0 0 48px;
-  line-height: 1.7;
+  margin: 0 0 32px;
+  line-height: 1.6;
 }
 
 /* Features */
 
 .feature-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 32px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 24px;
 }
 
 .feature-card {
   background: transparent;
   border: none;
-  border-radius: 0;
   padding: 0;
-  box-shadow: none;
-}
-
-section.alt .feature-card {
-  background: transparent;
 }
 
 .feature-icon {
   width: 40px;
   height: 40px;
   border-radius: 8px;
-  background: var(--bg-alt);
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 20px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   color: var(--accent);
   font-weight: 600;
 }
 
 .feature-card h3 {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 600;
-  margin: 0 0 10px;
+  margin: 0 0 8px;
 }
 
 .feature-card p {
   margin: 0;
-  color: var(--text-secondary);
+  color: var(--text-light);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 /* Steps */
@@ -297,16 +278,16 @@ section.alt .feature-card {
 }
 
 .step h3 {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 600;
-  margin: 0 0 12px;
+  margin: 0 0 8px;
 }
 
 .step p {
   margin: 0;
-  color: var(--text-secondary);
+  color: var(--text-light);
   font-size: 14px;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 /* Platforms */
