@@ -247,7 +247,7 @@ const App = {
     if (r2EndpointInput) r2EndpointInput.value = await Storage.getSetting('r2Endpoint', 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com');
     if (r2AccessKeyInput) r2AccessKeyInput.value = await Storage.getSetting('r2AccessKey', '');
     if (r2SecretKeyInput) r2SecretKeyInput.value = await Storage.getSetting('r2SecretKey', '');
-    if (r2BucketInput) r2BucketInput.value = await Storage.getSetting('r2Bucket', 'pocket-pic');
+    if (r2BucketInput) r2BucketInput.value = await Storage.getSetting('r2Bucket', 'pocketpic');
 
     if (r2SaveBtn) {
       r2SaveBtn.addEventListener('click', async () => {

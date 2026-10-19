@@ -106,17 +106,29 @@ const Gallery = {
 
   async syncR2Bucket() {
     if (this.isSyncingR2 || !window.Storage) return;
+
+    const accessKey = await Storage.getSetting('r2AccessKey');
+    const secretKey = await Storage.getSetting('r2SecretKey');
+    if (!accessKey || !secretKey) {
+      alert('Cloudflare R2 Access Key ID and Secret Access Key are required to sync photos from your private bucket.\n\nPlease go to Settings -> Cloudflare R2 Bucket Connection and enter your R2 Access Key ID and Secret Access Key.');
+      return;
+    }
+
     this.isSyncingR2 = true;
     this.render();
 
     try {
       const result = await Storage.syncFromR2();
       if (result !== false) {
+        alert(`Successfully synced ${result} photo(s) from your Cloudflare R2 bucket!`);
         await this.refresh();
         if (window.Camera) await Camera.updateGhostOverlay();
+      } else {
+        alert('Failed to sync from Cloudflare R2. Please verify your R2 Endpoint, Bucket Name, Access Key, and Secret Key in Settings.');
       }
     } catch (e) {
       console.warn('Sync R2 error:', e);
+      alert('R2 Sync Error: ' + e.message);
     } finally {
       this.isSyncingR2 = false;
       this.render();

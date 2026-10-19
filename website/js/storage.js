@@ -376,7 +376,7 @@ const Storage = {
   // Upload photo record to Cloudflare R2
   async syncToR2IfConfigured(photoRecord) {
     const r2Endpoint = await this.getSetting('r2Endpoint', 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com');
-    const r2Bucket = await this.getSetting('r2Bucket', 'pocket-pic');
+    const r2Bucket = await this.getSetting('r2Bucket', 'pocketpic');
 
     const uploadUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}/${photoRecord.filename}`;
     const arrayBuffer = await photoRecord.blob.arrayBuffer();
@@ -403,7 +403,7 @@ const Storage = {
   // Fetch photos directly from Cloudflare R2 bucket and load into local storage
   async syncFromR2() {
     const r2Endpoint = await this.getSetting('r2Endpoint', 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com');
-    const r2Bucket = await this.getSetting('r2Bucket', 'pocket-pic');
+    const r2Bucket = await this.getSetting('r2Bucket', 'pocketpic');
 
     const listUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}?list-type=2`;
     const headers = await this.getSigV4Headers('GET', listUrl);
@@ -430,7 +430,8 @@ const Storage = {
         const key = keyNodes[i].textContent;
         if (!key || key.endsWith('/')) continue;
 
-        const objectUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}/${encodeURIComponent(key)}`;
+        const keyPath = key.split('/').map(segment => encodeURIComponent(segment)).join('/');
+        const objectUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}/${keyPath}`;
         const objHeaders = await this.getSigV4Headers('GET', objectUrl);
 
         if (objHeaders) {
