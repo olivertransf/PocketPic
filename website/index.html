@@ -3,140 +3,221 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="PocketPic is a daily photo journal for macOS. Capture one photo per day with alignment overlays, then export a time-lapse of your transformation.">
-  <meta name="theme-color" content="#eef0f4">
-  <title>PocketPic — Daily Photo Journal for macOS</title>
+  <meta name="description" content="PocketPic Web App — One photo a day photo journal with alignment overlays and eye alignment time-lapse export.">
+  <meta name="theme-color" content="#0a0c10">
+  <title>PocketPic — Daily Photo Journal Web</title>
   <link rel="icon" href="images/favicon.png" type="image/png">
   <link rel="apple-touch-icon" href="images/app-icon.png">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-  <div class="grain" aria-hidden="true"></div>
 
-  <header class="site-header">
-    <div class="container header-inner">
-      <a href="index.html" class="logo">
-        <img src="images/app-icon.png" alt="" width="28" height="28">
-        PocketPic
+  <!-- Top Application Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <a href="#" class="brand">
+        <img src="images/app-icon.png" alt="PocketPic Icon" class="brand-icon">
+        <span>PocketPic</span>
       </a>
-      <button class="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M4 7h16M4 12h16M4 17h16"/>
-        </svg>
-      </button>
-      <nav class="nav" aria-label="Main">
-        <a href="#features">Features</a>
-        <a href="#how-it-works">How it works</a>
-        <a href="support.html">Support</a>
-        <a href="privacy.html">Privacy</a>
-        <a class="nav-download" href="PocketPic.app.zip" download>Download</a>
+
+      <!-- Navigation Tabs -->
+      <nav class="nav-tabs" aria-label="Main Navigation">
+        <button class="nav-btn active" data-tab="library">
+          <span>🖼️</span> Library
+        </button>
+        <button class="nav-btn" data-tab="camera">
+          <span>📷</span> Camera
+        </button>
+        <button class="nav-btn" data-tab="export">
+          <span>🎬</span> Export
+        </button>
+        <button class="nav-btn" data-tab="settings">
+          <span>⚙️</span> Settings
+        </button>
       </nav>
+
+      <button class="lock-btn" id="header-lock-btn" title="Lock Website">
+        🔒 Lock
+      </button>
     </div>
   </header>
 
-  <main>
-    <section class="hero">
-      <div class="hero-atmosphere" aria-hidden="true"></div>
-      <div class="container hero-grid">
-        <div class="hero-copy">
-          <p class="brand-mark">PocketPic</p>
-          <h1>One photo a day.<br>Watch yourself change.</h1>
-          <p class="tagline">A daily photo journal for macOS — ghost overlays for consistent framing, then export a time-lapse of your streak.</p>
-          <div class="hero-cta">
-            <a href="PocketPic.app.zip" class="download-btn" download>
-              Download for macOS
-            </a>
-            <p class="platform-note">macOS 15+ · Free · Runs on-device</p>
+  <!-- Main View Container -->
+  <main class="app-main">
+
+    <!-- Tab 1: Library / Gallery -->
+    <section id="tab-library" class="tab-pane active">
+      <div id="gallery-container">
+        <!-- Rendered dynamically by Gallery.js -->
+      </div>
+    </section>
+
+    <!-- Tab 2: Camera & Ghost Viewfinder -->
+    <section id="tab-camera" class="tab-pane">
+      <div class="camera-container">
+        <div class="viewfinder-wrapper">
+          <video id="viewfinder-video" class="viewfinder-video" autoplay playsinline muted></video>
+          <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
+        </div>
+
+        <div class="opacity-slider-box">
+          <span style="font-size: 0.85rem; color: var(--text-secondary);">Ghost Overlay:</span>
+          <input type="range" id="camera-opacity-range" min="0.1" max="1.0" step="0.05" value="0.4">
+          <button class="camera-tool-btn" id="camera-overlay-btn" title="Toggle Ghost Overlay">
+            👁️
+          </button>
+        </div>
+
+        <div class="camera-controls">
+          <button class="camera-tool-btn" id="camera-switch-btn" title="Switch Camera">
+            🔄
+          </button>
+          <button class="shutter-btn" id="camera-shutter-btn" title="Take Photo">
+            <div class="shutter-inner"></div>
+          </button>
+          <div style="width: 50px;"></div> <!-- Spacer for symmetry -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Time-lapse Export -->
+    <section id="tab-export" class="tab-pane">
+      <div class="export-card">
+        <h2>Export Time-lapse Video</h2>
+        <p style="color: var(--text-secondary); font-size: 0.95rem;">
+          Generate a shareable video montage from your captured photos with optional face eye alignment.
+        </p>
+
+        <div class="setting-group" style="padding:0; background:transparent; border:none;">
+          <label style="font-weight: 600; font-size: 0.95rem;">Frame Rate (FPS):</label>
+          <div class="fps-options">
+            <button class="fps-btn" data-fps="5">5 FPS</button>
+            <button class="fps-btn active" data-fps="10">10 FPS</button>
+            <button class="fps-btn" data-fps="15">15 FPS</button>
+            <button class="fps-btn" data-fps="24">24 FPS</button>
+            <button class="fps-btn" data-fps="30">30 FPS</button>
           </div>
         </div>
-        <div class="hero-visual">
-          <img class="hero-icon" src="images/app-icon.png" alt="PocketPic app icon" width="420" height="420">
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <label>Align Eyes</label>
+
+            <p>Vision landmarks alignment centers face and eye positions across all photos.</p>
+          </div>
+          <div class="setting-control">
+            <input type="checkbox" id="export-align-eyes-toggle" checked style="width: 20px; height: 20px; accent-color: var(--accent-color);">
+          </div>
+        </div>
+
+        <button class="btn btn-primary" id="start-export-btn" style="width: 100%; padding: 16px;">
+          🎬 Generate Video Montage
+        </button>
+
+        <div id="export-progress-box" class="export-progress-box" style="display: none;">
+          <div class="progress-bar">
+            <div id="export-progress-fill" class="progress-fill"></div>
+          </div>
+          <p id="export-progress-status" style="font-size: 0.85rem; color: var(--text-secondary); text-align: center;">Preparing frames...</p>
+        </div>
+
+        <div id="export-result-box" style="display: none; text-align: center; margin-top: 16px;">
+          <video id="export-video-preview" controls style="width: 100%; max-height: 320px; border-radius: var(--radius-md); background:#000; margin-bottom: 16px;"></video>
+          <a id="export-download-btn" class="btn btn-primary" style="width: 100%; text-decoration: none;">
+            ⬇️ Download Time-lapse Video
+          </a>
         </div>
       </div>
     </section>
 
-    <section id="features" class="features">
-      <div class="container">
-        <p class="section-label">What it does</p>
-        <h2 class="section-title">Built for a daily photo practice</h2>
-        <p class="section-intro">Shoot from the menu bar, line up with yesterday, and keep everything in your Photos library. No accounts. No cloud uploads.</p>
+    <!-- Tab 4: Settings -->
+    <section id="tab-settings" class="tab-pane">
+      <div class="settings-list">
+        <!-- Private Passphrase Section -->
+        <div class="settings-group">
+          <div class="group-title">Security & Passphrase</div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <label>Private Passphrase</label>
+              <p>Lock the web application with a custom unlock passphrase.</p>
+            </div>
+          </div>
+          <div style="display: flex; gap: 10px; margin-top: 10px;">
+            <input type="password" id="settings-passphrase-input" placeholder="New Passphrase..." style="flex:1;">
+            <button class="btn btn-primary" id="settings-save-passphrase">Save</button>
+          </div>
+        </div>
 
-        <ul class="feature-list">
-          <li>
-            <h3>Menu bar capture</h3>
-            <p>Snap your daily frame from the menu bar without opening the full window. The full app is there when you want your library and streaks.</p>
-          </li>
-          <li>
-            <h3>Ghost alignment overlay</h3>
-            <p>Yesterday’s photo fades over the viewfinder with adjustable opacity so pose, angle, and framing stay consistent day after day.</p>
-          </li>
-          <li>
-            <h3>Time-lapse export</h3>
-            <p>Turn your series into H.264 or HEVC video. Pick frame rate and resolution, then save or share.</p>
-          </li>
-          <li>
-            <h3>On-device eye alignment</h3>
-            <p>Optional Vision analysis keeps your face centered across frames. Processing stays on your Mac.</p>
-          </li>
-          <li>
-            <h3>Library &amp; streaks</h3>
-            <p>Browse by month, track your current and longest streak, and open any day full-screen.</p>
-          </li>
-          <li>
-            <h3>Privacy mode</h3>
-            <p>Hide in-app thumbnails with placeholders. Your photos stay untouched in the Photos app.</p>
-          </li>
-        </ul>
+        <!-- Camera Overlay Settings -->
+        <div class="settings-group">
+          <div class="group-title">Camera & Overlay</div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <label>Default Ghost Opacity</label>
+              <p>Default transparency level for the previous shot alignment overlay.</p>
+            </div>
+            <div class="setting-control">
+              <input type="range" id="settings-opacity-range" min="0.1" max="1.0" step="0.1" value="0.4">
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <label>Image Compression Quality</label>
+              <p>Canvas WebP/JPEG compression quality factor.</p>
+            </div>
+            <div class="setting-control">
+              <select id="settings-quality-select">
+                <option value="0.7">Low (0.70)</option>
+                <option value="0.85" selected>Optimized (0.85)</option>
+                <option value="0.95">High (0.95)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Optional Cloudflare R2 Sync -->
+        <div class="settings-group">
+          <div class="group-title">Cloudflare R2 Bucket Sync</div>
+          <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px;">
+            Optionally backup compressed photos to your Cloudflare R2 storage bucket.
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <input type="text" id="settings-r2-endpoint" placeholder="R2 Endpoint (https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com)">
+            <input type="text" id="settings-r2-bucket" placeholder="Bucket Name (e.g. pocket-pic)" value="pocket-pic">
+            <input type="text" id="settings-r2-access-key" placeholder="Access Key ID">
+            <input type="password" id="settings-r2-secret-key" placeholder="Secret Access Key">
+            <button class="btn btn-secondary" id="settings-save-r2" style="align-self: flex-end; margin-top: 6px;">
+              Save R2 Credentials
+            </button>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section id="how-it-works" class="how">
-      <div class="container">
-        <p class="section-label">How it works</p>
-        <h2 class="section-title">Three steps to your time-lapse</h2>
-        <ol class="steps">
-          <li>
-            <span class="step-num" aria-hidden="true">01</span>
-            <h3>Capture</h3>
-            <p>Open PocketPic, line up with the ghost overlay, and save one photo to your album.</p>
-          </li>
-          <li>
-            <span class="step-num" aria-hidden="true">02</span>
-            <h3>Build the streak</h3>
-            <p>Come back each day. Review the library, prune frames, and watch the streak grow.</p>
-          </li>
-          <li>
-            <span class="step-num" aria-hidden="true">03</span>
-            <h3>Export</h3>
-            <p>Generate a montage with optional eye alignment and share your transformation.</p>
-          </li>
-        </ol>
-      </div>
-    </section>
-
-    <section class="closing">
-      <div class="container closing-inner">
-        <h2>Start today’s frame</h2>
-        <p>Native SwiftUI for Mac. Free and open source.</p>
-        <a href="PocketPic.app.zip" class="download-btn" download>Download for macOS</a>
-      </div>
-    </section>
   </main>
 
-  <footer class="site-footer">
-    <div class="container footer-inner">
-      <nav class="footer-links" aria-label="Footer">
-        <a href="privacy.html">Privacy</a>
-        <a href="support.html">Support</a>
-        <a href="https://github.com/olivertransf/PocketPic">GitHub</a>
-      </nav>
-      <p class="footer-copy">&copy; 2026 Oliver Tran. MIT License.</p>
+  <!-- Passphrase Security Lock Overlay Modal -->
+  <div class="modal-overlay" id="passphrase-lock-overlay">
+    <div class="modal-content">
+      <div class="lock-screen-box">
+        <div class="lock-icon">🔒</div>
+        <h2>Private PocketPic</h2>
+        <p style="color: var(--text-secondary); font-size: 0.95rem;">Enter your passphrase to unlock your journal and camera.</p>
+        <input type="password" id="unlock-passphrase-input" class="passphrase-input" placeholder="Passphrase..." autofocus>
+        <div id="unlock-passphrase-error" style="color: var(--danger-color); font-size: 0.85rem; display: none;"></div>
+        <button class="btn btn-primary" id="unlock-passphrase-btn" style="padding: 14px;">Unlock App</button>
+      </div>
     </div>
-  </footer>
+  </div>
 
-  <script src="js/main.js"></script>
+  <!-- JS Module Scripts -->
+  <script src="js/auth.js"></script>
+  <script src="js/storage.js"></script>
+  <script src="js/camera.js"></script>
+  <script src="js/gallery.js"></script>
+  <script src="js/eye_detection.js"></script>
+  <script src="js/exporter.js"></script>
+  <script src="js/app.js"></script>
 </body>
 </html>
