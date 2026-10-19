@@ -57,11 +57,11 @@ const Camera = {
 
     this.stopSession();
 
-    // Max Native High-Resolution camera constraints matching macOS photo preset (3840x2160 ideal 4K)
+    // Balanced high-resolution camera constraints compatible with all browser and mobile sensors
     const constraints = {
       video: {
-        width: { ideal: 3840, min: 1280 },
-        height: { ideal: 2160, min: 720 }
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
       }
     };
 
@@ -77,6 +77,12 @@ const Camera = {
         this.videoElement.srcObject = this.stream;
         await this.videoElement.play();
         this.videoElement.style.transform = (this.facingMode === 'user' && !this.currentDeviceId) ? 'scaleX(-1)' : 'none';
+
+        // Listen to loadedmetadata to adjust aspect ratio container dynamically
+        this.videoElement.onloadedmetadata = () => {
+          this.adjustViewfinderAspect();
+        };
+        this.adjustViewfinderAspect();
       }
 
       // Initialize ImageCapture API if available
@@ -108,6 +114,19 @@ const Camera = {
         return false;
       }
     }
+  },
+
+  adjustViewfinderAspect() {
+    if (!this.videoElement) return;
+    const wrapper = this.videoElement.closest('.viewfinder-wrapper');
+    if (wrapper) {
+      const w = this.videoElement.videoWidth;
+      const h = this.videoElement.videoHeight;
+      if (w && h) {
+        wrapper.style.aspectRatio = `${w} / ${h}`;
+      }
+    }
+    this.renderOverlay();
   },
 
   updateResolutionBadge() {

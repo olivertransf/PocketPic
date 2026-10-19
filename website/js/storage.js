@@ -72,7 +72,9 @@ const Storage = {
         const request = store.put(photoRecord);
 
         request.onsuccess = async () => {
-          this.syncToR2IfConfigured(photoRecord).catch(err => console.warn('R2 sync skipped/failed:', err));
+          if (!metadata.skipR2Upload) {
+            this.syncToR2IfConfigured(photoRecord).catch(err => console.warn('R2 sync skipped/failed:', err));
+          }
           resolve(photoRecord);
         };
 
@@ -294,6 +296,38 @@ const Storage = {
     });
   },
 
+  // Parse capture date from object key filename (e.g. 2024-05-12, 20240512_143000, 1715521800000) or fallback to LastModified
+  extractDateFromKeyOrLastModified(key, xmlLastModified, headerLastModified) {
+    if (key) {
+      const filename = key.split('/').pop();
+
+      // Match ISO date YYYY-MM-DD or YYYY_MM_DD
+      const isoMatch = filename.match(/(20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])/);
+      if (isoMatch) {
+        const d = new Date(`${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}T12:00:00Z`);
+        if (!isNaN(d.getTime())) return d.toISOString();
+      }
+
+      // Match YYYYMMDD
+      const compactMatch = filename.match(/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/);
+      if (compactMatch) {
+        const d = new Date(`${compactMatch[1]}-${compactMatch[2]}-${compactMatch[3]}T12:00:00Z`);
+        if (!isNaN(d.getTime())) return d.toISOString();
+      }
+
+      // Match 13-digit millisecond timestamp (e.g. 1715521800000)
+      const tsMatch = filename.match(/\b(1[6-9]\d{11})\b/);
+      if (tsMatch) {
+        const d = new Date(parseInt(tsMatch[1], 10));
+        if (!isNaN(d.getTime())) return d.toISOString();
+      }
+    }
+
+    const dateStr = xmlLastModified || headerLastModified || new Date().toISOString();
+    const parsed = new Date(dateStr);
+    return !isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
+  },
+
   // S3 / SigV4 HMAC Helper Methods for Cloudflare R2
   async sha256Hex(strOrBuffer) {
     const buffer = typeof strOrBuffer === 'string' ? new TextEncoder().encode(strOrBuffer) : strOrBuffer;
@@ -415,17 +449,7 @@ const Storage = {
 
     try {
       let response;
-      try {
-        response = await fetch(listUrl, { method: 'GET', headers });
-      } catch (fetchErr) {
-        // Fallback to CORS proxy if browser CORS preflight fails
-        if (fetchErr.name === 'TypeError' || (fetchErr.message && fetchErr.message.includes('Failed to fetch'))) {
-          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(listUrl)}`;
-          response = await fetch(proxyUrl, { method: 'GET', headers });
-        } else {
-          throw fetchErr;
-        }
-      }
+      response = await fetch(listUrl, { method: 'GET', headers });
 
       if (!response.ok) {
         console.warn('R2 ListObjects response not OK:', response.status);
@@ -435,39 +459,42 @@ const Storage = {
       const xmlText = await response.text();
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-      const keyNodes = xmlDoc.getElementsByTagName('Key');
+      const contentsNodes = xmlDoc.getElementsByTagName('Contents');
 
       let fetchedCount = 0;
       const validImageExts = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.avif', '.gif'];
 
-      for (let i = 0; i < keyNodes.length; i++) {
-        const key = keyNodes[i].textContent;
+      for (let i = 0; i < contentsNodes.length; i++) {
+        const node = contentsNodes[i];
+        const keyNode = node.getElementsByTagName('Key')[0];
+        const lastModNode = node.getElementsByTagName('LastModified')[0];
+
+        const key = keyNode ? keyNode.textContent : null;
         if (!key || key.endsWith('/') || key.startsWith('.')) continue;
 
         const lowerKey = key.toLowerCase();
         const isImage = validImageExts.some(ext => lowerKey.endsWith(ext));
         if (!isImage) continue;
 
+        const xmlLastModified = lastModNode ? lastModNode.textContent : null;
+
         const keyPath = key.split('/').map(segment => encodeURIComponent(segment)).join('/');
         const objectUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}/${keyPath}`;
         const objHeaders = await this.getSigV4Headers('GET', objectUrl);
 
         if (objHeaders) {
-          let objResp;
-          try {
-            objResp = await fetch(objectUrl, { method: 'GET', headers: objHeaders });
-          } catch (e) {
-            const proxyObjUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(objectUrl)}`;
-            objResp = await fetch(proxyObjUrl, { method: 'GET', headers: objHeaders });
-          }
+          const objResp = await fetch(objectUrl, { method: 'GET', headers: objHeaders });
 
           if (objResp.ok) {
             const blob = await objResp.blob();
-            const lastModified = objResp.headers.get('Last-Modified') ? new Date(objResp.headers.get('Last-Modified')).toISOString() : new Date().toISOString();
+            const headerLastModified = objResp.headers.get('Last-Modified');
+            const dateIso = this.extractDateFromKeyOrLastModified(key, xmlLastModified, headerLastModified);
+
             await this.savePhoto(blob, {
               id: key.split('.')[0] || crypto.randomUUID(),
               filename: key,
-              date: lastModified
+              date: dateIso,
+              skipR2Upload: true
             });
             fetchedCount++;
           }

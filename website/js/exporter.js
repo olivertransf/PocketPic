@@ -162,12 +162,20 @@ const Exporter = {
   },
 
   drawAlignedFrame(ctx, img, currentEyes, refEyes, targetW, targetH) {
+    const imgW = img.naturalWidth || img.width;
+    const imgH = img.naturalHeight || img.height;
+
+    // First scale refEyes to target canvas space if needed
+    const fitScale = Math.min(targetW / imgW, targetH / imgH);
+    const fitX = (targetW - imgW * fitScale) / 2;
+    const fitY = (targetH - imgH * fitScale) / 2;
+
+    const dstLeft = { x: refEyes.leftEye.x * fitScale + fitX, y: refEyes.leftEye.y * fitScale + fitY };
+    const dstRight = { x: refEyes.rightEye.x * fitScale + fitX, y: refEyes.rightEye.y * fitScale + fitY };
+
     const srcLeft = currentEyes.leftEye;
     const srcRight = currentEyes.rightEye;
-    const dstLeft = refEyes.leftEye;
-    const dstRight = refEyes.rightEye;
 
-    // Calculate similarity transform (scale, rotation, translation)
     const srcDx = srcRight.x - srcLeft.x;
     const srcDy = srcRight.y - srcLeft.y;
     const srcDist = Math.hypot(srcDx, srcDy);
@@ -176,7 +184,7 @@ const Exporter = {
     const dstDy = dstRight.y - dstLeft.y;
     const dstDist = Math.hypot(dstDx, dstDy);
 
-    if (srcDist < 10 || dstDist < 10) {
+    if (srcDist < 5 || dstDist < 5) {
       this.drawAspectFitFrame(ctx, img, targetW, targetH);
       return;
     }

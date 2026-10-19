@@ -290,7 +290,7 @@ const Gallery = {
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 </div>
               ` : `
-                <img src="${imgUrl}" alt="Photo ${new Date(photo.date).toLocaleDateString()}" loading="lazy" onload="URL.revokeObjectURL(this.src)">
+                <img src="${imgUrl}" alt="Photo ${new Date(photo.date).toLocaleDateString()}" loading="lazy">
               `}
               ${this.isSelectionMode ? `
                 <div class="selection-badge ${isSelected ? 'checked' : ''}">
@@ -356,8 +356,13 @@ const Gallery = {
 
   async openDetailModal(photoId) {
     if (!window.Storage) return;
-    const photo = await Storage.getPhoto(photoId);
-    if (!photo) return;
+
+    const currentIndex = this.photos.findIndex(p => p.id === photoId);
+    if (currentIndex === -1) return;
+
+    const photo = this.photos[currentIndex];
+    const prevPhoto = currentIndex < this.photos.length - 1 ? this.photos[currentIndex + 1] : null;
+    const nextPhoto = currentIndex > 0 ? this.photos[currentIndex - 1] : null;
 
     let modal = document.getElementById('photo-detail-modal');
     if (!modal) {
@@ -368,16 +373,26 @@ const Gallery = {
     }
 
     const imgUrl = URL.createObjectURL(photo.blob);
+    const formattedDate = new Date(photo.date).toLocaleDateString(undefined, {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
 
     modal.innerHTML = `
       <div class="modal-content photo-detail-content">
         <button class="modal-close" id="detail-close">&times;</button>
         <div class="photo-detail-frame">
+          ${prevPhoto ? `<button class="nav-arrow nav-arrow-left" id="detail-prev-btn" title="Older Photo">&lsaquo;</button>` : ''}
           <img src="${imgUrl}" alt="Full Photo">
+          ${nextPhoto ? `<button class="nav-arrow nav-arrow-right" id="detail-next-btn" title="Newer Photo">&rsaquo;</button>` : ''}
         </div>
         <div class="photo-detail-meta">
-          <div class="meta-date" style="font-size: 0.88rem; color: var(--text-secondary); font-weight: 500;">
-            ${new Date(photo.date).toLocaleString()}
+          <div class="meta-date" style="font-size: 0.88rem; color: var(--text-primary); font-weight: 500;">
+            ${formattedDate}
           </div>
           <div class="meta-actions" style="display: flex; gap: 8px;">
             <button class="btn btn-secondary" id="detail-detect-eyes">Detect Eyes</button>
@@ -391,6 +406,14 @@ const Gallery = {
 
     document.getElementById('detail-close').onclick = () => this.closeDetailModal();
     document.getElementById('detail-delete').onclick = () => this.deleteSinglePhoto(photo.id);
+
+    if (prevPhoto) {
+      document.getElementById('detail-prev-btn').onclick = () => this.openDetailModal(prevPhoto.id);
+    }
+    if (nextPhoto) {
+      document.getElementById('detail-next-btn').onclick = () => this.openDetailModal(nextPhoto.id);
+    }
+
     document.getElementById('detail-detect-eyes').onclick = async () => {
       if (window.EyeDetection) {
         const eyes = await EyeDetection.detectEyes(photo.blob);
