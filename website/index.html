@@ -175,8 +175,8 @@
             <div class="setting-control">
               <select id="settings-quality-select">
                 <option value="0.7">Low (0.70)</option>
-                <option value="0.85" selected>Optimized (0.85)</option>
-                <option value="0.95">High (0.95)</option>
+                <option value="0.85">Optimized (0.85)</option>
+                <option value="0.95" selected>High Native (0.95)</option>
               </select>
             </div>
           </div>
@@ -204,15 +204,15 @@
   </main>
 
   <!-- Passphrase Security Lock Overlay Modal -->
-  <div class="modal-overlay" id="passphrase-lock-overlay">
+  <div class="modal-overlay active" id="passphrase-lock-overlay">
     <div class="modal-content">
       <div class="lock-screen-box">
         <div class="lock-icon-wrapper">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
         </div>
         <div>
           <h2 style="font-size: 1.25rem;">Private PocketPic</h2>
-          <p style="color: var(--text-secondary); font-size: 0.88rem; margin-top: 4px;">Enter your passphrase to access your journal.</p>
+          <p id="unlock-passphrase-desc" style="color: var(--text-secondary); font-size: 0.88rem; margin-top: 4px;">Enter your passphrase to access your journal.</p>
         </div>
         <input type="password" id="unlock-passphrase-input" class="passphrase-input" placeholder="Passphrase..." autofocus>
         <div id="unlock-passphrase-error" style="color: var(--danger-color); font-size: 0.82rem; display: none;"></div>

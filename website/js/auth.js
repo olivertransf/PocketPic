@@ -1,6 +1,6 @@
 //
 // Auth module for PocketPic Web
-// Handles passphrase setup, unlocking, verification, and session management.
+// Handles mandatory passphrase setup, unlocking, verification, and session management.
 //
 
 const Auth = {
@@ -19,9 +19,6 @@ const Auth = {
   },
 
   isUnlocked() {
-    if (!this.isPassphraseSet()) {
-      return true; // No passphrase required if none set yet
-    }
     return sessionStorage.getItem(this.SESSION_UNLOCKED_KEY) === 'true';
   },
 
@@ -38,11 +35,19 @@ const Auth = {
   },
 
   async unlock(passphrase) {
+    if (!passphrase || passphrase.trim().length === 0) {
+      return false;
+    }
+
+    const hash = await this.hashPassphrase(passphrase.trim());
+
+    // If no custom passphrase has been set yet, set it on first unlock!
     if (!this.isPassphraseSet()) {
+      localStorage.setItem(this.PASSPHRASE_KEY, hash);
       sessionStorage.setItem(this.SESSION_UNLOCKED_KEY, 'true');
       return true;
     }
-    const hash = await this.hashPassphrase(passphrase.trim());
+
     const storedHash = localStorage.getItem(this.PASSPHRASE_KEY);
     if (hash === storedHash) {
       sessionStorage.setItem(this.SESSION_UNLOCKED_KEY, 'true');

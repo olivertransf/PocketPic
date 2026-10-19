@@ -1,6 +1,6 @@
 //
 // Main Application Integration module for PocketPic Web
-// Controls tab navigation, event listeners, camera setup, settings, passphrase lock screen, and exports.
+// Controls tab navigation, event listeners, camera setup, settings, mandatory passphrase lock screen, and exports.
 //
 
 const App = {
@@ -20,7 +20,7 @@ const App = {
     // 3. Initialize App Navigation
     this.setupTabNavigation();
 
-    // 4. Initialize Gallery first so initial Library view renders immediately
+    // 4. Initialize Gallery first
     const galleryContainer = document.getElementById('gallery-container');
     if (galleryContainer) {
       try {
@@ -30,11 +30,11 @@ const App = {
       }
     }
 
-    // 5. Initialize Camera & Viewfinder asynchronously (non-blocking)
+    // 5. Initialize Camera & Viewfinder asynchronously
     const videoEl = document.getElementById('viewfinder-video');
     const overlayCanvasEl = document.getElementById('overlay-canvas');
     if (videoEl && overlayCanvasEl) {
-      Camera.init(videoEl, overlayCanvasEl).catch(e => console.warn('Camera init non-blocking warning:', e));
+      Camera.init(videoEl, overlayCanvasEl).catch(e => console.warn('Camera init warning:', e));
     }
 
     // 6. Bind Camera Controls
@@ -49,12 +49,24 @@ const App = {
 
   checkAuth() {
     const lockOverlay = document.getElementById('passphrase-lock-overlay');
+    const lockDesc = document.getElementById('unlock-passphrase-desc');
+    const lockBtn = document.getElementById('unlock-passphrase-btn');
+
     if (!lockOverlay) return;
 
     if (Auth.isUnlocked()) {
       lockOverlay.classList.remove('active');
     } else {
       lockOverlay.classList.add('active');
+
+      if (!Auth.isPassphraseSet()) {
+        if (lockDesc) lockDesc.textContent = 'Create a passphrase to secure your private photo journal.';
+        if (lockBtn) lockBtn.textContent = 'Set Passphrase & Unlock';
+      } else {
+        if (lockDesc) lockDesc.textContent = 'Enter your passphrase to access your journal.';
+        if (lockBtn) lockBtn.textContent = 'Unlock Journal';
+      }
+
       this.bindLockScreen();
     }
   },
@@ -67,11 +79,23 @@ const App = {
     if (!unlockBtn || !inputEl) return;
 
     const attemptUnlock = async () => {
-      const success = await Auth.unlock(inputEl.value);
+      const val = inputEl.value.trim();
+      if (!val) {
+        if (errorEl) {
+          errorEl.textContent = 'Please enter a passphrase.';
+          errorEl.style.display = 'block';
+        }
+        return;
+      }
+
+      const success = await Auth.unlock(val);
       if (success) {
         document.getElementById('passphrase-lock-overlay').classList.remove('active');
         inputEl.value = '';
         if (errorEl) errorEl.style.display = 'none';
+        if (this.currentTab === 'library') {
+          Gallery.refresh();
+        }
       } else {
         if (errorEl) {
           errorEl.textContent = 'Incorrect passphrase. Try again.';
@@ -142,13 +166,10 @@ const App = {
       shutterBtn.addEventListener('click', async () => {
         const frameCanvas = Camera.captureFrame();
         if (frameCanvas) {
-          // Save captured frame directly to IndexedDB
           await Storage.savePhoto(frameCanvas);
-          // Refresh overlay and gallery
           await Camera.updateGhostOverlay();
           await Gallery.refresh();
 
-          // Flash effect
           const viewfinder = document.querySelector('.viewfinder-wrapper');
           if (viewfinder) {
             viewfinder.style.opacity = '0.3';
@@ -184,7 +205,6 @@ const App = {
   },
 
   async bindSettings() {
-    // Passphrase Settings
     const setPassphraseBtn = document.getElementById('settings-save-passphrase');
     const passphraseInput = document.getElementById('settings-passphrase-input');
 
@@ -193,12 +213,11 @@ const App = {
       setPassphraseBtn.addEventListener('click', async () => {
         const val = passphraseInput.value;
         await Auth.setPassphrase(val);
-        alert(val ? 'Passphrase protection enabled!' : 'Passphrase removed.');
+        alert(val ? 'Passphrase protection updated!' : 'Passphrase cleared.');
         passphraseInput.value = '';
       });
     }
 
-    // Overlay Opacity Setting
     const settingsOpacityRange = document.getElementById('settings-opacity-range');
     if (settingsOpacityRange) {
       settingsOpacityRange.value = await Storage.getSetting('overlayOpacity', 0.4);
@@ -209,23 +228,21 @@ const App = {
       });
     }
 
-    // Compression Quality Setting
     const qualitySelect = document.getElementById('settings-quality-select');
     if (qualitySelect) {
-      qualitySelect.value = await Storage.getSetting('compressionQuality', 0.85);
+      qualitySelect.value = await Storage.getSetting('compressionQuality', 0.95);
       qualitySelect.addEventListener('change', async (e) => {
         await Storage.setSetting('compressionQuality', parseFloat(e.target.value));
       });
     }
 
-    // Cloudflare R2 Settings
     const r2EndpointInput = document.getElementById('settings-r2-endpoint');
     const r2AccessKeyInput = document.getElementById('settings-r2-access-key');
     const r2SecretKeyInput = document.getElementById('settings-r2-secret-key');
     const r2BucketInput = document.getElementById('settings-r2-bucket');
     const r2SaveBtn = document.getElementById('settings-save-r2');
 
-    if (r2EndpointInput) r2EndpointInput.value = await Storage.getSetting('r2Endpoint', '');
+    if (r2EndpointInput) r2EndpointInput.value = await Storage.getSetting('r2Endpoint', 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com');
     if (r2AccessKeyInput) r2AccessKeyInput.value = await Storage.getSetting('r2AccessKey', '');
     if (r2SecretKeyInput) r2SecretKeyInput.value = await Storage.getSetting('r2SecretKey', '');
     if (r2BucketInput) r2BucketInput.value = await Storage.getSetting('r2Bucket', 'pocket-pic');
