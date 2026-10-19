@@ -1,6 +1,6 @@
 //
 // Gallery module for PocketPic Web
-// Renders photo mosaic grouped by month, streak counters, multi-select bulk delete, privacy mode, and full-screen detail viewer with clean SVG icons and zero emojis.
+// Renders photo mosaic grouped by month, streak counters, multi-select bulk delete, privacy mode, and full-screen detail viewer with minimal SVG icons.
 //
 
 const Gallery = {
@@ -186,7 +186,7 @@ const Gallery = {
 
         <div class="gallery-actions">
           <button class="btn btn-secondary ${this.isPrivacyMode ? 'active' : ''}" id="gallery-privacy-toggle" title="Toggle Privacy Mode">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
             ${this.isPrivacyMode ? 'Hidden' : 'Hide'}
           </button>
 
@@ -210,10 +210,10 @@ const Gallery = {
       html += `
         <div class="empty-state">
           <div class="empty-icon">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
           </div>
-          <h3 style="font-family: var(--font-serif); font-size: 1.6rem; font-weight: 400; margin-bottom: 6px;">No Photos Yet</h3>
-          <p style="color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 20px;">Snap your daily photo to build your streak and timeline.</p>
+          <h3 style="font-size: 1.3rem; font-weight: 600; margin-bottom: 6px;">No Photos Yet</h3>
+          <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 20px;">Snap your daily photo to build your streak and timeline.</p>
           <button class="btn btn-primary" onclick="App.switchTab('camera')">Open Camera</button>
         </div>
       `;
@@ -235,7 +235,7 @@ const Gallery = {
             <div class="mosaic-tile ${isSelected ? 'selected' : ''}" data-id="${photo.id}">
               ${this.isPrivacyMode ? `
                 <div class="privacy-placeholder">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
                 </div>
               ` : `
                 <img src="${imgUrl}" alt="Photo ${new Date(photo.date).toLocaleDateString()}" loading="lazy" onload="URL.revokeObjectURL(this.src)">
@@ -319,10 +319,10 @@ const Gallery = {
           <img src="${imgUrl}" alt="Full Photo">
         </div>
         <div class="photo-detail-meta">
-          <div class="meta-date" style="font-size: 0.9rem; color: var(--text-secondary); font-weight: 500;">
+          <div class="meta-date" style="font-size: 0.88rem; color: var(--text-secondary); font-weight: 500;">
             ${new Date(photo.date).toLocaleString()}
           </div>
-          <div class="meta-actions" style="display: flex; gap: 10px;">
+          <div class="meta-actions" style="display: flex; gap: 8px;">
             <button class="btn btn-secondary" id="detail-detect-eyes">Detect Eyes</button>
             <button class="btn btn-danger" id="detail-delete">Delete</button>
           </div>
