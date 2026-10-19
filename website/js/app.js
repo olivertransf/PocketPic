@@ -94,7 +94,9 @@ const App = {
         inputEl.value = '';
         if (errorEl) errorEl.style.display = 'none';
         if (this.currentTab === 'library') {
-          Gallery.refresh();
+          await Gallery.refresh();
+          // Automatic background sync from R2 if configured
+          Gallery.syncR2Bucket().catch(e => console.warn('R2 auto sync error:', e));
         }
       } else {
         if (errorEl) {
@@ -230,7 +232,7 @@ const App = {
 
     const qualitySelect = document.getElementById('settings-quality-select');
     if (qualitySelect) {
-      qualitySelect.value = await Storage.getSetting('compressionQuality', 0.95);
+      qualitySelect.value = await Storage.getSetting('compressionQuality', 0.85);
       qualitySelect.addEventListener('change', async (e) => {
         await Storage.setSetting('compressionQuality', parseFloat(e.target.value));
       });

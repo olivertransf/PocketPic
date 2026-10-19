@@ -63,6 +63,7 @@
         <div class="viewfinder-wrapper">
           <video id="viewfinder-video" class="viewfinder-video" autoplay playsinline muted></video>
           <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
+          <div id="camera-resolution-badge" class="camera-res-badge" style="display:none;"></div>
         </div>
 
         <div class="opacity-slider-box">
@@ -175,8 +176,8 @@
             <div class="setting-control">
               <select id="settings-quality-select">
                 <option value="0.7">Low (0.70)</option>
-                <option value="0.85">Optimized (0.85)</option>
-                <option value="0.95" selected>High Native (0.95)</option>
+                <option value="0.85" selected>Optimized WebP (0.85)</option>
+                <option value="0.95">High Native (0.95)</option>
               </select>
             </div>
           </div>

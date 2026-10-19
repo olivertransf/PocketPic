@@ -381,6 +381,23 @@ h1, h2, .section-title {
   pointer-events: none;
 }
 
+.camera-res-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.5px;
+  pointer-events: none;
+  z-index: 10;
+}
+
 .camera-controls {
   display: flex;
   align-items: center;

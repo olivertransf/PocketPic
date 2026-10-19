@@ -1,6 +1,6 @@
 //
 // Gallery module for PocketPic Web
-// Renders photo mosaic grouped by month, streak counters, multi-select bulk delete, privacy mode, and full-screen detail viewer with minimal SVG icons.
+// Renders photo mosaic grouped by month, streak counters, multi-select bulk delete, privacy mode, and full-screen detail viewer with minimal SVG icons and R2 sync.
 //
 
 const Gallery = {
@@ -9,6 +9,7 @@ const Gallery = {
   selectedPhotoIds: new Set(),
   isSelectionMode: false,
   isPrivacyMode: false,
+  isSyncingR2: false,
 
   async init(containerEl) {
     this.containerElement = containerEl;
@@ -103,6 +104,25 @@ const Gallery = {
     return groups;
   },
 
+  async syncR2Bucket() {
+    if (this.isSyncingR2 || !window.Storage) return;
+    this.isSyncingR2 = true;
+    this.render();
+
+    try {
+      const result = await Storage.syncFromR2();
+      if (result !== false) {
+        await this.refresh();
+        if (window.Camera) await Camera.updateGhostOverlay();
+      }
+    } catch (e) {
+      console.warn('Sync R2 error:', e);
+    } finally {
+      this.isSyncingR2 = false;
+      this.render();
+    }
+  },
+
   async togglePrivacyMode(enabled = null) {
     this.isPrivacyMode = enabled !== null ? enabled : !this.isPrivacyMode;
     if (window.Storage) {
@@ -185,6 +205,11 @@ const Gallery = {
         </div>
 
         <div class="gallery-actions">
+          <button class="btn btn-secondary ${this.isSyncingR2 ? 'active' : ''}" id="gallery-r2-sync" title="Sync Cloudflare R2 Bucket">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="${this.isSyncingR2 ? 'spin' : ''}"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+            ${this.isSyncingR2 ? 'Syncing...' : 'Sync R2'}
+          </button>
+
           <button class="btn btn-secondary ${this.isPrivacyMode ? 'active' : ''}" id="gallery-privacy-toggle" title="Toggle Privacy Mode">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
             ${this.isPrivacyMode ? 'Hidden' : 'Hide'}
@@ -213,8 +238,11 @@ const Gallery = {
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
           </div>
           <h3 style="font-size: 1.3rem; font-weight: 600; margin-bottom: 6px;">No Photos Yet</h3>
-          <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 20px;">Snap your daily photo to build your streak and timeline.</p>
-          <button class="btn btn-primary" onclick="App.switchTab('camera')">Open Camera</button>
+          <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 20px;">Snap your daily photo or sync your Cloudflare R2 bucket.</p>
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-primary" onclick="App.switchTab('camera')">Open Camera</button>
+            <button class="btn btn-secondary" onclick="Gallery.syncR2Bucket()">Sync R2 Bucket</button>
+          </div>
         </div>
       `;
     } else {
@@ -264,6 +292,11 @@ const Gallery = {
   },
 
   attachEvents() {
+    const syncBtn = document.getElementById('gallery-r2-sync');
+    if (syncBtn) {
+      syncBtn.addEventListener('click', () => this.syncR2Bucket());
+    }
+
     const privacyBtn = document.getElementById('gallery-privacy-toggle');
     if (privacyBtn) {
       privacyBtn.addEventListener('click', () => this.togglePrivacyMode());

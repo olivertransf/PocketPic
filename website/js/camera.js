@@ -1,6 +1,6 @@
 //
 // Camera module for PocketPic Web
-// Manages high resolution camera capture (ideal 3840x2160 matching macOS .photo preset), camera switching, live viewfinder, ghost alignment overlay, and snapping photos.
+// Manages full-sensor high resolution camera capture (ideal 3840x2160 matching macOS photo preset and ImageCapture API), camera switching, live viewfinder, ghost alignment overlay, and snapping photos.
 //
 
 const Camera = {
@@ -13,6 +13,7 @@ const Camera = {
   overlayOpacity: 0.4,
   overlayImage: null,
   isOverlayVisible: true,
+  imageCapture: null,
 
   async init(videoEl, overlayCanvasEl) {
     this.videoElement = videoEl;
@@ -56,11 +57,11 @@ const Camera = {
 
     this.stopSession();
 
-    // High resolution camera constraints matching macOS photo preset (ideal 4K 3840x2160)
+    // Max Native High-Resolution camera constraints matching macOS photo preset (3840x2160 ideal 4K)
     const constraints = {
       video: {
-        width: { ideal: 3840 },
-        height: { ideal: 2160 }
+        width: { ideal: 3840, min: 1280 },
+        height: { ideal: 2160, min: 720 }
       }
     };
 
@@ -77,22 +78,48 @@ const Camera = {
         await this.videoElement.play();
         this.videoElement.style.transform = (this.facingMode === 'user' && !this.currentDeviceId) ? 'scaleX(-1)' : 'none';
       }
+
+      // Initialize ImageCapture API if available
+      const videoTrack = this.stream.getVideoTracks()[0];
+      if (videoTrack && 'ImageCapture' in window) {
+        try {
+          this.imageCapture = new window.ImageCapture(videoTrack);
+        } catch (e) {
+          this.imageCapture = null;
+        }
+      }
+
       await this.enumerateDevices();
       await this.updateGhostOverlay();
+      this.updateResolutionBadge();
       return true;
     } catch (e) {
       console.error('High-res camera access error, trying fallback:', e);
-      // Fallback: try default video constraint without specific dimensions
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({ video: true });
         if (this.videoElement) {
           this.videoElement.srcObject = this.stream;
           await this.videoElement.play();
         }
+        this.updateResolutionBadge();
         return true;
       } catch (err) {
         console.error('Fallback camera failed:', err);
         return false;
+      }
+    }
+  },
+
+  updateResolutionBadge() {
+    const badge = document.getElementById('camera-resolution-badge');
+    if (badge && this.videoElement) {
+      const w = this.videoElement.videoWidth || 0;
+      const h = this.videoElement.videoHeight || 0;
+      if (w && h) {
+        badge.textContent = `${w} × ${h}`;
+        badge.style.display = 'inline-block';
+      } else {
+        badge.style.display = 'none';
       }
     }
   },
@@ -105,6 +132,7 @@ const Camera = {
     if (this.videoElement) {
       this.videoElement.srcObject = null;
     }
+    this.imageCapture = null;
   },
 
   async switchCamera() {
@@ -193,7 +221,6 @@ const Camera = {
     if (this.isOverlayVisible && this.overlayImage) {
       ctx.globalAlpha = this.overlayOpacity;
 
-      // Aspect-fill / Aspect-fit draw overlay photo
       const imgW = this.overlayImage.width;
       const imgH = this.overlayImage.height;
 
@@ -214,13 +241,33 @@ const Camera = {
     ctx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
   },
 
+  async captureFrameBlob() {
+    // 1. Try ImageCapture API first for max native camera sensor resolution
+    if (this.imageCapture && typeof this.imageCapture.takePhoto === 'function') {
+      try {
+        const photoBlob = await this.imageCapture.takePhoto();
+        if (photoBlob) return photoBlob;
+      } catch (e) {
+        console.warn('ImageCapture takePhoto error, falling back to canvas buffer:', e);
+      }
+    }
+
+    // 2. Fallback to Canvas element buffer drawing
+    const canvas = this.captureFrame();
+    if (!canvas) return null;
+
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.98);
+    });
+  },
+
   captureFrame() {
     if (!this.videoElement) return null;
 
     const video = this.videoElement;
     const canvas = document.createElement('canvas');
 
-    // Full native video stream resolution (matching macOS high res capture)
+    // Full video stream resolution (matching macOS high res capture up to 3840x2160)
     canvas.width = video.videoWidth || 3840;
     canvas.height = video.videoHeight || 2160;
 
