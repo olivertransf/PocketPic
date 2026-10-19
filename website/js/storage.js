@@ -438,9 +438,15 @@ const Storage = {
       const keyNodes = xmlDoc.getElementsByTagName('Key');
 
       let fetchedCount = 0;
+      const validImageExts = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.avif', '.gif'];
+
       for (let i = 0; i < keyNodes.length; i++) {
         const key = keyNodes[i].textContent;
-        if (!key || key.endsWith('/')) continue;
+        if (!key || key.endsWith('/') || key.startsWith('.')) continue;
+
+        const lowerKey = key.toLowerCase();
+        const isImage = validImageExts.some(ext => lowerKey.endsWith(ext));
+        if (!isImage) continue;
 
         const keyPath = key.split('/').map(segment => encodeURIComponent(segment)).join('/');
         const objectUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}/${keyPath}`;
