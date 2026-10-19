@@ -1,6 +1,6 @@
 //
 // Gallery module for PocketPic Web
-// Renders photo mosaic grouped by month, streak counters, multi-select bulk delete, privacy mode, and full-screen detail viewer.
+// Renders photo mosaic grouped by month, streak counters, multi-select bulk delete, privacy mode, and full-screen detail viewer with clean SVG icons and zero emojis.
 //
 
 const Gallery = {
@@ -12,12 +12,18 @@ const Gallery = {
 
   async init(containerEl) {
     this.containerElement = containerEl;
-    this.isPrivacyMode = await Storage.getSetting('hidePhotosInGallery', false);
+    if (window.Storage) {
+      this.isPrivacyMode = await Storage.getSetting('hidePhotosInGallery', false);
+    }
     await this.refresh();
   },
 
   async refresh() {
-    this.photos = await Storage.getAllPhotos();
+    if (window.Storage) {
+      this.photos = await Storage.getAllPhotos();
+    } else {
+      this.photos = [];
+    }
     this.render();
   },
 
@@ -33,9 +39,6 @@ const Gallery = {
       })
     );
 
-    const sortedDays = Array.from(uniqueDays).sort().reverse(); // Newest first
-
-    // Calculate current streak
     let currentStreak = 0;
     const today = new Date();
     const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -58,7 +61,6 @@ const Gallery = {
       }
     }
 
-    // Calculate longest streak
     let longestStreak = 0;
     let tempStreak = 0;
     const ascDays = Array.from(uniqueDays).sort();
@@ -103,7 +105,9 @@ const Gallery = {
 
   async togglePrivacyMode(enabled = null) {
     this.isPrivacyMode = enabled !== null ? enabled : !this.isPrivacyMode;
-    await Storage.setSetting('hidePhotosInGallery', this.isPrivacyMode);
+    if (window.Storage) {
+      await Storage.setSetting('hidePhotosInGallery', this.isPrivacyMode);
+    }
     this.render();
   },
 
@@ -121,7 +125,7 @@ const Gallery = {
     } else {
       this.selectedPhotoIds.add(photoId);
     }
-    this.renderHeaderAndToolbar();
+    this.render();
   },
 
   selectAll() {
@@ -136,19 +140,23 @@ const Gallery = {
   async deleteSelected() {
     if (this.selectedPhotoIds.size === 0) return;
     if (confirm(`Delete ${this.selectedPhotoIds.size} selected photo(s)?`)) {
-      await Storage.deletePhotos(Array.from(this.selectedPhotoIds));
+      if (window.Storage) {
+        await Storage.deletePhotos(Array.from(this.selectedPhotoIds));
+      }
       this.selectedPhotoIds.clear();
       this.isSelectionMode = false;
       await this.refresh();
-      await Camera.updateGhostOverlay();
+      if (window.Camera) await Camera.updateGhostOverlay();
     }
   },
 
   async deleteSinglePhoto(id) {
     if (confirm('Are you sure you want to delete this photo?')) {
-      await Storage.deletePhoto(id);
+      if (window.Storage) {
+        await Storage.deletePhoto(id);
+      }
       await this.refresh();
-      await Camera.updateGhostOverlay();
+      if (window.Camera) await Camera.updateGhostOverlay();
       this.closeDetailModal();
     }
   },
@@ -201,9 +209,11 @@ const Gallery = {
     if (this.photos.length === 0) {
       html += `
         <div class="empty-state">
-          <div class="empty-icon">📷</div>
-          <h3>No Photos Yet</h3>
-          <p>Snap your daily photo to build your streak and timeline.</p>
+          <div class="empty-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+          <h3 style="font-family: var(--font-serif); font-size: 1.6rem; font-weight: 400; margin-bottom: 6px;">No Photos Yet</h3>
+          <p style="color: var(--text-secondary); font-size: 0.95rem; margin-bottom: 20px;">Snap your daily photo to build your streak and timeline.</p>
           <button class="btn btn-primary" onclick="App.switchTab('camera')">Open Camera</button>
         </div>
       `;
@@ -253,10 +263,6 @@ const Gallery = {
     this.attachEvents();
   },
 
-  renderHeaderAndToolbar() {
-    this.render(); // Simple re-render for consistency
-  },
-
   attachEvents() {
     const privacyBtn = document.getElementById('gallery-privacy-toggle');
     if (privacyBtn) {
@@ -278,7 +284,6 @@ const Gallery = {
       deleteSelBtn.addEventListener('click', () => this.deleteSelected());
     }
 
-    // Tile click handlers
     const tiles = this.containerElement.querySelectorAll('.mosaic-tile');
     tiles.forEach(tile => {
       const id = tile.dataset.id;
@@ -293,6 +298,7 @@ const Gallery = {
   },
 
   async openDetailModal(photoId) {
+    if (!window.Storage) return;
     const photo = await Storage.getPhoto(photoId);
     if (!photo) return;
 
@@ -313,10 +319,12 @@ const Gallery = {
           <img src="${imgUrl}" alt="Full Photo">
         </div>
         <div class="photo-detail-meta">
-          <div class="meta-date">📅 ${new Date(photo.date).toLocaleString()}</div>
-          <div class="meta-actions">
-            <button class="btn btn-secondary" id="detail-detect-eyes">👀 Detect Eyes</button>
-            <button class="btn btn-danger" id="detail-delete">🗑️ Delete</button>
+          <div class="meta-date" style="font-size: 0.9rem; color: var(--text-secondary); font-weight: 500;">
+            ${new Date(photo.date).toLocaleString()}
+          </div>
+          <div class="meta-actions" style="display: flex; gap: 10px;">
+            <button class="btn btn-secondary" id="detail-detect-eyes">Detect Eyes</button>
+            <button class="btn btn-danger" id="detail-delete">Delete</button>
           </div>
         </div>
       </div>

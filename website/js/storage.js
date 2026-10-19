@@ -1,6 +1,6 @@
 //
 // Storage module for PocketPic Web
-// Manages local photo storage using IndexedDB, image compression, settings, and optional Cloudflare R2 backup.
+// Manages local photo storage using IndexedDB, high resolution WebP/JPEG image compression, settings, and Cloudflare R2 bucket integration.
 //
 
 const Storage = {
@@ -34,21 +34,21 @@ const Storage = {
 
       request.onerror = (event) => {
         console.error('IndexedDB error:', event.target.error);
-        reject(event.target.error);
+        resolve(null);
       };
     });
   },
 
-  // Save a photo (compresses image to WebP or JPEG blob first)
+  // Save a photo (compresses image matching macOS high resolution sensor output)
   async savePhoto(imageSource, metadata = {}) {
     await this.init();
 
-    // Compression parameters from settings or default
-    const maxDimension = await this.getSetting('maxDimension', 1920);
-    const quality = await this.getSetting('compressionQuality', 0.85);
+    // Default maxDimension 3840 (matching macOS native photo resolution) and quality 0.95
+    const maxDimension = await this.getSetting('maxDimension', 3840);
+    const quality = await this.getSetting('compressionQuality', 0.95);
     const format = await this.getSetting('imageFormat', 'image/webp');
 
-    // Compress image to blob
+    // Compress image to high-res blob
     const { blob, width, height, aspectRatio } = await this.compressImage(imageSource, maxDimension, quality, format);
 
     const id = metadata.id || crypto.randomUUID();
@@ -65,60 +65,85 @@ const Storage = {
       mimeType: blob.type
     };
 
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.PHOTOS_STORE], 'readwrite');
-      const store = tx.objectStore(this.PHOTOS_STORE);
-      const request = store.put(photoRecord);
+    if (!this.db) return photoRecord;
 
-      request.onsuccess = async () => {
-        // Optional Cloudflare R2 backup sync
-        this.syncToR2IfConfigured(photoRecord).catch(err => console.warn('R2 sync skipped or failed:', err));
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.PHOTOS_STORE], 'readwrite');
+        const store = tx.objectStore(this.PHOTOS_STORE);
+        const request = store.put(photoRecord);
+
+        request.onsuccess = async () => {
+          // Cloudflare R2 backup sync if credentials configured
+          this.syncToR2IfConfigured(photoRecord).catch(err => console.warn('R2 sync skipped/failed:', err));
+          resolve(photoRecord);
+        };
+
+        request.onerror = () => resolve(photoRecord);
+      } catch (e) {
+        console.warn('savePhoto transaction error:', e);
         resolve(photoRecord);
-      };
-
-      request.onerror = (e) => reject(e.target.error);
+      }
     });
   },
 
   async getAllPhotos() {
     await this.init();
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.PHOTOS_STORE], 'readonly');
-      const store = tx.objectStore(this.PHOTOS_STORE);
-      const request = store.getAll();
+    if (!this.db) return [];
 
-      request.onsuccess = () => {
-        const photos = request.result || [];
-        // Sort newest first by default
-        photos.sort((a, b) => new Date(b.date) - new Date(a.date));
-        resolve(photos);
-      };
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.PHOTOS_STORE], 'readonly');
+        const store = tx.objectStore(this.PHOTOS_STORE);
+        const request = store.getAll();
 
-      request.onerror = (e) => reject(e.target.error);
+        request.onsuccess = () => {
+          const photos = request.result || [];
+          photos.sort((a, b) => new Date(b.date) - new Date(a.date));
+          resolve(photos);
+        };
+
+        request.onerror = () => resolve([]);
+      } catch (e) {
+        console.warn('getAllPhotos transaction error:', e);
+        resolve([]);
+      }
     });
   },
 
   async getPhoto(id) {
     await this.init();
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.PHOTOS_STORE], 'readonly');
-      const store = tx.objectStore(this.PHOTOS_STORE);
-      const request = store.get(id);
+    if (!this.db) return null;
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = (e) => reject(e.target.error);
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.PHOTOS_STORE], 'readonly');
+        const store = tx.objectStore(this.PHOTOS_STORE);
+        const request = store.get(id);
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+      } catch (e) {
+        resolve(null);
+      }
     });
   },
 
   async deletePhoto(id) {
     await this.init();
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.PHOTOS_STORE], 'readwrite');
-      const store = tx.objectStore(this.PHOTOS_STORE);
-      const request = store.delete(id);
+    if (!this.db) return true;
 
-      request.onsuccess = () => resolve(true);
-      request.onerror = (e) => reject(e.target.error);
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.PHOTOS_STORE], 'readwrite');
+        const store = tx.objectStore(this.PHOTOS_STORE);
+        const request = store.delete(id);
+
+        request.onsuccess = () => resolve(true);
+        request.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
     });
   },
 
@@ -129,8 +154,8 @@ const Storage = {
     return true;
   },
 
-  // Helper function to compress images using Canvas API
-  async compressImage(source, maxDimension = 1920, quality = 0.85, preferredFormat = 'image/webp') {
+  // Compress image helper using Canvas API
+  async compressImage(source, maxDimension = 3840, quality = 0.95, preferredFormat = 'image/webp') {
     return new Promise((resolve, reject) => {
       const img = new Image();
 
@@ -155,12 +180,10 @@ const Storage = {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Fallback to jpeg if browser doesn't support webp canvas export
         let mime = preferredFormat;
         canvas.toBlob(
           (blob) => {
             if (!blob) {
-              // Retry with image/jpeg
               canvas.toBlob(
                 (jpegBlob) => {
                   resolve({ blob: jpegBlob, width, height, aspectRatio });
@@ -189,8 +212,8 @@ const Storage = {
         img.onload = process;
         img.onerror = reject;
       } else if (source instanceof HTMLVideoElement || source instanceof HTMLCanvasElement) {
-        let width = source.videoWidth || source.width;
-        let height = source.videoHeight || source.height;
+        let width = source.videoWidth || source.width || 3840;
+        let height = source.videoHeight || source.height || 2160;
         const aspectRatio = width / height;
 
         if (width > maxDimension || height > maxDimension) {
@@ -222,45 +245,56 @@ const Storage = {
     });
   },
 
-  // Settings Storage Methods
+  // Settings Storage Methods with safe fallbacks
   async getSetting(key, defaultValue = null) {
     await this.init();
-    return new Promise((resolve) => {
-      const tx = this.db.transaction([this.SETTINGS_STORE], 'readonly');
-      const store = tx.objectStore(this.SETTINGS_STORE);
-      const request = store.get(key);
+    if (!this.db) return defaultValue;
 
-      request.onsuccess = () => {
-        resolve(request.result ? request.result.value : defaultValue);
-      };
-      request.onerror = () => resolve(defaultValue);
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.SETTINGS_STORE], 'readonly');
+        const store = tx.objectStore(this.SETTINGS_STORE);
+        const request = store.get(key);
+
+        request.onsuccess = () => {
+          resolve(request.result ? request.result.value : defaultValue);
+        };
+        request.onerror = () => resolve(defaultValue);
+      } catch (e) {
+        resolve(defaultValue);
+      }
     });
   },
 
   async setSetting(key, value) {
     await this.init();
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.SETTINGS_STORE], 'readwrite');
-      const store = tx.objectStore(this.SETTINGS_STORE);
-      const request = store.put({ key, value });
+    if (!this.db) return false;
 
-      request.onsuccess = () => resolve(true);
-      request.onerror = (e) => reject(e.target.error);
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.SETTINGS_STORE], 'readwrite');
+        const store = tx.objectStore(this.SETTINGS_STORE);
+        const request = store.put({ key, value });
+
+        request.onsuccess = () => resolve(true);
+        request.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
     });
   },
 
-  // Cloudflare R2 Upload Helper (Optional S3 / Pre-Signed URL upload)
+  // Cloudflare R2 Upload Helper
   async syncToR2IfConfigured(photoRecord) {
-    const r2Endpoint = await this.getSetting('r2Endpoint');
+    const r2Endpoint = await this.getSetting('r2Endpoint', 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com');
+    const r2Bucket = await this.getSetting('r2Bucket', 'pocket-pic');
     const r2AccessKey = await this.getSetting('r2AccessKey');
     const r2SecretKey = await this.getSetting('r2SecretKey');
-    const r2Bucket = await this.getSetting('r2Bucket', 'pocket-pic');
 
     if (!r2Endpoint || !r2AccessKey || !r2SecretKey) {
-      return false; // R2 direct API creds not configured
+      return false; // R2 API credentials not full
     }
 
-    // Direct HTTP upload if worker or pre-signed URL proxy endpoint is set
     try {
       const uploadUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}/${photoRecord.filename}`;
       const response = await fetch(uploadUrl, {

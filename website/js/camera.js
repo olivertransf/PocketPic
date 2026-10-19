@@ -1,6 +1,6 @@
 //
 // Camera module for PocketPic Web
-// Manages video stream, camera switching, live viewfinder, ghost alignment overlay, and snapping photos.
+// Manages high resolution camera capture (ideal 3840x2160 matching macOS .photo preset), camera switching, live viewfinder, ghost alignment overlay, and snapping photos.
 //
 
 const Camera = {
@@ -56,10 +56,11 @@ const Camera = {
 
     this.stopSession();
 
+    // High resolution camera constraints matching macOS photo preset (ideal 4K 3840x2160)
     const constraints = {
       video: {
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
+        width: { ideal: 3840 },
+        height: { ideal: 2160 }
       }
     };
 
@@ -80,8 +81,8 @@ const Camera = {
       await this.updateGhostOverlay();
       return true;
     } catch (e) {
-      console.error('Camera access error:', e);
-      // Fallback: try default video constraint without specific device/facing mode
+      console.error('High-res camera access error, trying fallback:', e);
+      // Fallback: try default video constraint without specific dimensions
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({ video: true });
         if (this.videoElement) {
@@ -181,8 +182,8 @@ const Camera = {
     const canvas = this.overlayCanvas;
     const ctx = canvas.getContext('2d');
 
-    const videoW = this.videoElement.videoWidth || this.videoElement.clientWidth || 640;
-    const videoH = this.videoElement.videoHeight || this.videoElement.clientHeight || 480;
+    const videoW = this.videoElement.videoWidth || this.videoElement.clientWidth || 1920;
+    const videoH = this.videoElement.videoHeight || this.videoElement.clientHeight || 1080;
 
     canvas.width = videoW;
     canvas.height = videoH;
@@ -218,8 +219,10 @@ const Camera = {
 
     const video = this.videoElement;
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || video.clientWidth || 1920;
-    canvas.height = video.videoHeight || video.clientHeight || 1080;
+
+    // Full native video stream resolution (matching macOS high res capture)
+    canvas.width = video.videoWidth || 3840;
+    canvas.height = video.videoHeight || 2160;
 
     const ctx = canvas.getContext('2d');
 
