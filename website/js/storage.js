@@ -414,7 +414,19 @@ const Storage = {
     }
 
     try {
-      const response = await fetch(listUrl, { method: 'GET', headers });
+      let response;
+      try {
+        response = await fetch(listUrl, { method: 'GET', headers });
+      } catch (fetchErr) {
+        // Fallback to CORS proxy if browser CORS preflight fails
+        if (fetchErr.name === 'TypeError' || (fetchErr.message && fetchErr.message.includes('Failed to fetch'))) {
+          const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(listUrl)}`;
+          response = await fetch(proxyUrl, { method: 'GET', headers });
+        } else {
+          throw fetchErr;
+        }
+      }
+
       if (!response.ok) {
         console.warn('R2 ListObjects response not OK:', response.status);
         return false;
@@ -435,7 +447,14 @@ const Storage = {
         const objHeaders = await this.getSigV4Headers('GET', objectUrl);
 
         if (objHeaders) {
-          const objResp = await fetch(objectUrl, { method: 'GET', headers: objHeaders });
+          let objResp;
+          try {
+            objResp = await fetch(objectUrl, { method: 'GET', headers: objHeaders });
+          } catch (e) {
+            const proxyObjUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(objectUrl)}`;
+            objResp = await fetch(proxyObjUrl, { method: 'GET', headers: objHeaders });
+          }
+
           if (objResp.ok) {
             const blob = await objResp.blob();
             const lastModified = objResp.headers.get('Last-Modified') ? new Date(objResp.headers.get('Last-Modified')).toISOString() : new Date().toISOString();
