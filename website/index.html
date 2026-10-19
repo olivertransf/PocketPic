@@ -198,6 +198,36 @@
               Save R2 Credentials
             </button>
           </div>
+
+          <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+            <div style="font-weight: 600; font-size: 0.88rem; margin-bottom: 6px;">Cloudflare R2 CORS Policy Setup</div>
+            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 10px;">
+              If browser requests are blocked by CORS policy, copy and paste this CORS policy JSON in your <strong>Cloudflare R2 Dashboard &rarr; pocketpic bucket &rarr; Settings &rarr; CORS Policy</strong>:
+            </p>
+            <pre style="background: var(--bg-surface); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); font-size: 0.75rem; color: var(--text-primary); overflow-x: auto; font-family: monospace;">[
+  {
+    "AllowedOrigins": [
+      "https://pocket-pic.olivertran.me",
+      "http://localhost:8080",
+      "*"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "PUT",
+      "POST",
+      "DELETE",
+      "HEAD"
+    ],
+    "AllowedHeaders": [
+      "*"
+    ],
+    "ExposeHeaders": [
+      "ETag"
+    ],
+    "MaxAgeSeconds": 3600
+  }
+]</pre>
+          </div>
         </div>
       </div>
     </section>

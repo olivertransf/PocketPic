@@ -128,7 +128,19 @@ const Gallery = {
       }
     } catch (e) {
       console.warn('Sync R2 error:', e);
-      alert('R2 Sync Error: ' + e.message);
+      if (e.message === 'CORS_ERROR') {
+        alert(
+          'Cloudflare R2 CORS Error:\n\n' +
+          'Your web browser was blocked from connecting to your R2 bucket by CORS policy.\n\n' +
+          'To fix this in Cloudflare:\n' +
+          '1. Go to Cloudflare Dashboard -> R2 -> "pocketpic" bucket -> Settings.\n' +
+          '2. Find "CORS Policy" and click Edit.\n' +
+          '3. Add a CORS policy allowing your domain (or "*") with methods GET, PUT, HEAD, OPTIONS.\n\n' +
+          'Check the CORS guide in PocketPic Settings for the exact JSON policy snippet!'
+        );
+      } else {
+        alert('R2 Sync Error: ' + e.message);
+      }
     } finally {
       this.isSyncingR2 = false;
       this.render();

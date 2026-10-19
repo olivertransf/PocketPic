@@ -451,6 +451,9 @@ const Storage = {
       return fetchedCount;
     } catch (e) {
       console.error('R2 syncFromR2 error:', e);
+      if (e.name === 'TypeError' || (e.message && e.message.includes('Failed to fetch'))) {
+        throw new Error('CORS_ERROR');
+      }
       return false;
     }
   }
