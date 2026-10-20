@@ -103,9 +103,17 @@ const Storage = {
     const { blob, width, height, aspectRatio } = await this.compressImage(imageSource, maxDimension, quality, format);
 
     const id = metadata.id || crypto.randomUUID();
+    let fallbackDate = new Date().toISOString();
+    if (imageSource && typeof imageSource === 'object' && imageSource.lastModified) {
+      const lmDate = new Date(imageSource.lastModified);
+      if (!Number.isNaN(lmDate.getTime())) {
+        fallbackDate = lmDate.toISOString();
+      }
+    }
+
     const record = {
       id,
-      date: metadata.date || new Date().toISOString(),
+      date: metadata.date || fallbackDate,
       blob,
       width,
       height,

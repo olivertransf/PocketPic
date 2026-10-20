@@ -80,7 +80,14 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   if (path === "/api/photos" && method === "GET") {
-    const { photos, etag } = await readIndex(env);
+    let { photos, etag } = await readIndex(env);
+    if (url.searchParams.has("rebuild")) {
+      photos = await scanBucketForPhotos(env);
+      await env.PHOTOS.put(INDEX_KEY, JSON.stringify(photos), {
+        httpMetadata: { contentType: "application/json" },
+      });
+      return json({ photos: sortNewestFirst(photos) });
+    }
     if (!etag) {
       await env.PHOTOS.put(INDEX_KEY, JSON.stringify(photos), {
         httpMetadata: { contentType: "application/json" },
@@ -178,18 +185,19 @@ async function putPhoto(request: Request, env: Env, id: string): Promise<Respons
   if (declaredLength > MAX_UPLOAD_BYTES) return json({ error: "Photo too large" }, 413);
   if (!request.body) return json({ error: "Empty body" }, 400);
 
+  const bodyBytes = new Uint8Array(await request.arrayBuffer());
+  if (bodyBytes.length > MAX_UPLOAD_BYTES) return json({ error: "Photo too large" }, 413);
+
   const key = `photos/${id}.${extension === "jpeg" ? "jpg" : extension}`;
   const requestedDate = parseDate(request.headers.get("X-Photo-Date"));
   const existingDate = requestedDate ? null : (await readIndex(env)).photos.find((photo) => photo.id === id)?.date;
-  const capturedAt = requestedDate ?? existingDate ?? new Date().toISOString();
-  const object = await env.PHOTOS.put(key, request.body, {
+  const exifDate = requestedDate || existingDate ? null : parseExifDate(bodyBytes);
+  const capturedAt = requestedDate ?? existingDate ?? exifDate ?? new Date().toISOString();
+
+  const object = await env.PHOTOS.put(key, bodyBytes, {
     httpMetadata: { contentType },
     customMetadata: { capturedAt },
   });
-  if (object.size > MAX_UPLOAD_BYTES) {
-    await env.PHOTOS.delete(key);
-    return json({ error: "Photo too large" }, 413);
-  }
 
   const width = parseDimension(request.headers.get("X-Photo-Width"));
   const height = parseDimension(request.headers.get("X-Photo-Height"));
@@ -202,7 +210,7 @@ async function putPhoto(request: Request, env: Env, id: string): Promise<Respons
     saved = {
       id,
       key,
-      date: requestedDate ?? existing?.date ?? capturedAt,
+      date: capturedAt,
       mimeType: contentType,
       width,
       height,
@@ -265,10 +273,24 @@ async function scanBucketForPhotos(env: Env): Promise<PhotoMeta[]> {
       while (seen.has(id)) id = `${baseId.slice(0, 90)}_${seen.size}`;
       seen.add(id);
 
+      let capturedAt = getCapturedAtMetadata(object.customMetadata) ?? dateFromKey(object.key);
+      if (!capturedAt) {
+        try {
+          const header = await env.PHOTOS.get(object.key, { range: { length: 65536 } });
+          if (header) {
+            const buf = new Uint8Array(await header.arrayBuffer());
+            capturedAt = parseExifDate(buf);
+          }
+        } catch {
+          // ignore EXIF parse failure
+        }
+      }
+      const date = capturedAt ?? object.uploaded.toISOString();
+
       photos.push({
         id,
         key: object.key,
-        date: parseDate(object.customMetadata?.capturedAt ?? null) ?? dateFromKey(object.key) ?? object.uploaded.toISOString(),
+        date,
         mimeType: object.httpMetadata?.contentType ?? mimeType,
         width: null,
         height: null,
@@ -281,14 +303,165 @@ async function scanBucketForPhotos(env: Env): Promise<PhotoMeta[]> {
   return photos;
 }
 
+function getCapturedAtMetadata(customMetadata?: Record<string, string> | null): string | null {
+  if (!customMetadata) return null;
+  for (const [key, value] of Object.entries(customMetadata)) {
+    const lowerKey = key.toLowerCase();
+    if (
+      lowerKey === "capturedat" ||
+      lowerKey === "captured_at" ||
+      lowerKey === "captured-at" ||
+      lowerKey === "date" ||
+      lowerKey === "x-photo-date"
+    ) {
+      const parsed = parseDate(value);
+      if (parsed) return parsed;
+    }
+  }
+  return null;
+}
+
 function dateFromKey(key: string): string | null {
   const filename = key.split("/").pop() ?? key;
-  const iso = filename.match(/(20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])/);
-  if (iso) return new Date(`${iso[1]}-${iso[2]}-${iso[3]}T12:00:00Z`).toISOString();
-  const compact = filename.match(/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/);
-  if (compact) return new Date(`${compact[1]}-${compact[2]}-${compact[3]}T12:00:00Z`).toISOString();
-  const millis = filename.match(/\b(1[6-9]\d{11})\b/);
-  if (millis) return new Date(Number(millis[1])).toISOString();
+
+  // 1. Full ISO date-time: 2024-05-20_14-30-25 or 2024-05-20T14:30:25 or 20240520_143025
+  const fullDateTimeIso = filename.match(/(20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_-]([0-5]\d)[:_-]([0-5]\d)/);
+  if (fullDateTimeIso) {
+    const [, y, m, d, hh, mm, ss] = fullDateTimeIso;
+    return parseDate(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
+  }
+
+  const fullDateTimeCompact = filename.match(/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[-_T\s]?([01]\d|2[0-3])([0-5]\d)([0-5]\d)/);
+  if (fullDateTimeCompact) {
+    const [, y, m, d, hh, mm, ss] = fullDateTimeCompact;
+    return parseDate(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
+  }
+
+  // 2. Date only: 2024-05-20
+  const isoDate = filename.match(/(20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])/);
+  if (isoDate) {
+    return parseDate(`${isoDate[1]}-${isoDate[2]}-${isoDate[3]}T12:00:00Z`);
+  }
+
+  // 3. Compact date only: 20240520
+  const compactDate = filename.match(/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/);
+  if (compactDate) {
+    return parseDate(`${compactDate[1]}-${compactDate[2]}-${compactDate[3]}T12:00:00Z`);
+  }
+
+  // 4. Milliseconds epoch (13 digits starting with 16-20)
+  const millis = filename.match(/(?:^|[^0-9])([12]\d{12})(?:[^0-9]|$)/);
+  if (millis) return parseDate(Number(millis[1]));
+
+  // 5. Seconds epoch (10 digits starting with 16-20)
+  const seconds = filename.match(/(?:^|[^0-9])([12]\d{9})(?:[^0-9]|$)/);
+  if (seconds) return parseDate(Number(seconds[1]) * 1000);
+
+  return null;
+}
+
+function parseExifDate(arrayBuffer: ArrayBuffer | Uint8Array): string | null {
+  const bytes = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
+  if (bytes.length < 14) return null;
+
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+
+  let offset = 2;
+  while (offset < bytes.length - 4) {
+    if (bytes[offset] !== 0xff) break;
+    const marker = bytes[offset + 1];
+    if (marker === 0xda || marker === 0xd9) break;
+
+    const length = (bytes[offset + 2] << 8) | bytes[offset + 3];
+    if (marker === 0xe1) {
+      const app1Offset = offset + 4;
+      if (
+        app1Offset + 6 <= bytes.length &&
+        bytes[app1Offset] === 0x45 &&
+        bytes[app1Offset + 1] === 0x78 &&
+        bytes[app1Offset + 2] === 0x69 &&
+        bytes[app1Offset + 3] === 0x66 &&
+        bytes[app1Offset + 4] === 0x00 &&
+        bytes[app1Offset + 5] === 0x00
+      ) {
+        const tiffOffset = app1Offset + 6;
+        return parseTiffExifDate(bytes, tiffOffset);
+      }
+    }
+    offset += 2 + length;
+  }
+  return null;
+}
+
+function parseTiffExifDate(bytes: Uint8Array, tiffOffset: number): string | null {
+  if (tiffOffset + 8 > bytes.length) return null;
+  const isLittleEndian = bytes[tiffOffset] === 0x49 && bytes[tiffOffset + 1] === 0x49;
+  const isBigEndian = bytes[tiffOffset] === 0x4d && bytes[tiffOffset + 1] === 0x4d;
+  if (!isLittleEndian && !isBigEndian) return null;
+
+  const readUint16 = (o: number) => {
+    if (o + 2 > bytes.length) return 0;
+    return isLittleEndian ? bytes[o] | (bytes[o + 1] << 8) : (bytes[o] << 8) | bytes[o + 1];
+  };
+  const readUint32 = (o: number) => {
+    if (o + 4 > bytes.length) return 0;
+    return isLittleEndian
+      ? (bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16) | (bytes[o + 3] << 24)) >>> 0
+      : ((bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3]) >>> 0;
+  };
+
+  if (readUint16(tiffOffset + 2) !== 0x002a) return null;
+
+  const ifd0Offset = tiffOffset + readUint32(tiffOffset + 4);
+  let exifSubIfdOffset: number | null = null;
+  let dateTimeString: string | null = null;
+
+  const readIfdTags = (ifdOffset: number) => {
+    if (ifdOffset + 2 > bytes.length) return;
+    const tagCount = readUint16(ifdOffset);
+    let entryOffset = ifdOffset + 2;
+
+    for (let i = 0; i < tagCount; i++) {
+      if (entryOffset + 12 > bytes.length) break;
+      const tag = readUint16(entryOffset);
+      const type = readUint16(entryOffset + 2);
+      const count = readUint32(entryOffset + 4);
+      const valueOffset = entryOffset + 8;
+
+      if (tag === 0x8769) {
+        exifSubIfdOffset = tiffOffset + readUint32(valueOffset);
+      } else if (tag === 0x9003 || tag === 0x9004 || tag === 0x0132) {
+        if (type === 2) {
+          const stringOffset = count > 4 ? tiffOffset + readUint32(valueOffset) : valueOffset;
+          if (stringOffset + count <= bytes.length) {
+            let str = "";
+            for (let c = 0; c < count; c++) {
+              const ch = bytes[stringOffset + c];
+              if (ch === 0) break;
+              str += String.fromCharCode(ch);
+            }
+            if (!dateTimeString || tag === 0x9003) {
+              dateTimeString = str;
+            }
+          }
+        }
+      }
+      entryOffset += 12;
+    }
+  };
+
+  readIfdTags(ifd0Offset);
+  if (exifSubIfdOffset !== null) {
+    readIfdTags(exifSubIfdOffset);
+  }
+
+  if (dateTimeString) {
+    const match = (dateTimeString as string).trim().match(/^(20\d{2})[:/-](0[1-9]|1[0-2])[:/-](0[1-9]|[12]\d|3[01])\s+([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/);
+    if (match) {
+      const iso = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`;
+      return parseDate(iso);
+    }
+  }
   return null;
 }
 
@@ -350,9 +523,9 @@ function toHex(buffer: ArrayBuffer): string {
   return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function parseDate(value: string | null): string | null {
+function parseDate(value: string | number | null): string | null {
   if (!value) return null;
-  const time = Date.parse(value);
+  const time = typeof value === "number" ? value : Date.parse(value);
   return Number.isNaN(time) ? null : new Date(time).toISOString();
 }
 

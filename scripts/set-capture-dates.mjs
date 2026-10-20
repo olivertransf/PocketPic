@@ -22,6 +22,18 @@ writeFileSync(configPath, JSON.stringify({
   r2_buckets: [{ binding: "PHOTOS", bucket_name: "pocketpic", remote: true }],
 }));
 
+function getCapturedAtMetadata(customMetadata) {
+  if (!customMetadata) return null;
+  for (const [k, v] of Object.entries(customMetadata)) {
+    const lk = k.toLowerCase();
+    if (lk === "capturedat" || lk === "captured_at" || lk === "captured-at" || lk === "date" || lk === "x-photo-date") {
+      const parsed = new Date(v);
+      if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    }
+  }
+  return null;
+}
+
 const { env, dispose } = await getPlatformProxy({ configPath });
 let updated = 0;
 let skipped = 0;
@@ -41,7 +53,7 @@ try {
       skipped++;
       continue;
     }
-    if (head.customMetadata?.capturedAt === capturedAt.toISOString()) {
+    if (getCapturedAtMetadata(head.customMetadata) === capturedAt.toISOString()) {
       skipped++;
       continue;
     }
