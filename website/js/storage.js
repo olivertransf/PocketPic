@@ -192,13 +192,25 @@ const Storage = {
         return false;
       }
 
-      const remoteById = new Map(remote.map((photo) => [photo.id, photo]));
       const localById = new Map((await this.getAllPhotos()).map((record) => [record.id, record]));
 
-      const toDownload = [...remoteById.values()].filter((meta) => {
+      const toDownload = [];
+      for (const meta of remote) {
         const record = localById.get(meta.id);
-        return !record || record.updatedAt !== meta.updatedAt;
-      });
+        if (!record) {
+          toDownload.push(meta);
+        } else if (record.updatedAt !== meta.updatedAt || !record.blob) {
+          toDownload.push(meta);
+        } else if (record.date !== meta.date) {
+          await this.putRecord({
+            ...record,
+            date: meta.date,
+            updatedAt: meta.updatedAt,
+            pending: false
+          });
+          changed = true;
+        }
+      }
 
       for (let i = 0; i < toDownload.length; i += 4) {
         await Promise.all(toDownload.slice(i, i + 4).map((meta) => this.downloadPhoto(meta)));

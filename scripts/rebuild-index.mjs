@@ -71,19 +71,26 @@ export async function rebuildBucketIndex(env) {
 function getCapturedAtMetadata(customMetadata) {
   if (!customMetadata) return null;
   for (const [key, value] of Object.entries(customMetadata)) {
-    const lowerKey = key.toLowerCase();
+    const cleanKey = key.toLowerCase().replace(/^x-amz-meta-|^x-goog-meta-/, "").trim();
     if (
-      lowerKey === "capturedat" ||
-      lowerKey === "captured_at" ||
-      lowerKey === "captured-at" ||
-      lowerKey === "date" ||
-      lowerKey === "x-photo-date" ||
-      lowerKey === "createdat" ||
-      lowerKey === "created_at" ||
-      lowerKey === "creationdate" ||
-      lowerKey === "date_taken" ||
-      lowerKey === "datetaken" ||
-      lowerKey === "timestamp"
+      cleanKey === "capturedat" ||
+      cleanKey === "captured_at" ||
+      cleanKey === "captured-at" ||
+      cleanKey === "date" ||
+      cleanKey === "x-photo-date" ||
+      cleanKey === "createdat" ||
+      cleanKey === "created_at" ||
+      cleanKey === "creationdate" ||
+      cleanKey === "creation_date" ||
+      cleanKey === "date_taken" ||
+      cleanKey === "datetaken" ||
+      cleanKey === "timestamp" ||
+      cleanKey === "datetimeoriginal" ||
+      cleanKey === "date-time-original" ||
+      cleanKey === "datetime" ||
+      cleanKey === "created" ||
+      cleanKey === "originationdate" ||
+      cleanKey === "time"
     ) {
       const parsed = parseDate(value);
       if (parsed) return parsed;
@@ -93,31 +100,36 @@ function getCapturedAtMetadata(customMetadata) {
 }
 
 function dateFromKey(key) {
-  const filename = key.split("/").pop() ?? key;
+  let filename = key.split("/").pop() ?? key;
+  try {
+    filename = decodeURIComponent(filename);
+  } catch {
+    // ignore decode error
+  }
 
-  const fullDateTimeIso = filename.match(/(20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_.-]([0-5]\d)[:_.-]([0-5]\d)/);
+  const fullDateTimeIso = filename.match(/(19\d{2}|20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_.-]([0-5]\d)[:_.-]([0-5]\d)/);
   if (fullDateTimeIso) {
     const [, y, m, d, hh, mm, ss] = fullDateTimeIso;
     return parseDate(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
   }
 
-  const fullDateTimeCompact = filename.match(/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[-_T\s]?([01]\d|2[0-3])([0-5]\d)([0-5]\d)/);
+  const fullDateTimeCompact = filename.match(/(19\d{2}|20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[-_T\s]?([01]\d|2[0-3])([0-5]\d)([0-5]\d)/);
   if (fullDateTimeCompact) {
     const [, y, m, d, hh, mm, ss] = fullDateTimeCompact;
     return parseDate(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
   }
 
-  const isoDate = filename.match(/(20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])/);
+  const isoDate = filename.match(/(19\d{2}|20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])/);
   if (isoDate) {
     return parseDate(`${isoDate[1]}-${isoDate[2]}-${isoDate[3]}T12:00:00Z`);
   }
 
-  const usDate = filename.match(/(0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_./](20\d{2})/);
+  const usDate = filename.match(/(0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_./](19\d{2}|20\d{2})/);
   if (usDate) {
     return parseDate(`${usDate[3]}-${usDate[1]}-${usDate[2]}T12:00:00Z`);
   }
 
-  const compactDate = filename.match(/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/);
+  const compactDate = filename.match(/(19\d{2}|20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/);
   if (compactDate) {
     return parseDate(`${compactDate[1]}-${compactDate[2]}-${compactDate[3]}T12:00:00Z`);
   }
@@ -224,7 +236,8 @@ function parseTiffExifDate(bytes, tiffOffset) {
 
   const ifd0Offset = tiffOffset + readUint32(tiffOffset + 4);
   let exifSubIfdOffset = null;
-  let dateTimeString = null;
+  let bestDateTimeString = null;
+  let bestPriority = 999;
 
   const readIfdTags = (ifdOffset) => {
     if (ifdOffset + 2 > bytes.length) return;
@@ -241,7 +254,8 @@ function parseTiffExifDate(bytes, tiffOffset) {
       if (tag === 0x8769) {
         exifSubIfdOffset = tiffOffset + readUint32(valueOffset);
       } else if (tag === 0x9003 || tag === 0x9004 || tag === 0x0132) {
-        if (type === 2) {
+        const priority = tag === 0x9003 ? 1 : tag === 0x9004 ? 2 : 3;
+        if (type === 2 && priority < bestPriority) {
           const stringOffset = count > 4 ? tiffOffset + readUint32(valueOffset) : valueOffset;
           if (stringOffset + count <= bytes.length) {
             let str = "";
@@ -250,8 +264,9 @@ function parseTiffExifDate(bytes, tiffOffset) {
               if (ch === 0) break;
               str += String.fromCharCode(ch);
             }
-            if (!dateTimeString || tag === 0x9003) {
-              dateTimeString = str;
+            if (str.trim()) {
+              bestDateTimeString = str;
+              bestPriority = priority;
             }
           }
         }
@@ -265,19 +280,48 @@ function parseTiffExifDate(bytes, tiffOffset) {
     readIfdTags(exifSubIfdOffset);
   }
 
-  if (dateTimeString) {
-    const match = dateTimeString.trim().match(/^(20\d{2})[:/-](0[1-9]|1[0-2])[:/-](0[1-9]|[12]\d|3[01])\s+([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/);
-    if (match) {
-      const iso = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`;
-      return parseDate(iso);
-    }
+  if (bestDateTimeString) {
+    return parseDate(bestDateTimeString);
   }
   return null;
 }
 
 function parseDate(value) {
-  if (!value) return null;
-  const time = typeof value === "number" ? value : Date.parse(value);
+  if (value === null || value === undefined || value === "") return null;
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value <= 0) return null;
+    const ms = value < 1e11 ? value * 1000 : value;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+
+  const str = String(value).trim();
+  if (!str) return null;
+
+  if (/^\d{9,13}$/.test(str)) {
+    const num = Number(str);
+    if (Number.isFinite(num) && num > 0) {
+      const ms = num < 1e11 ? num * 1000 : num;
+      const d = new Date(ms);
+      if (!Number.isNaN(d.getTime())) return d.toISOString();
+    }
+  }
+
+  const exifMatch = str.match(/^(19\d{2}|20\d{2})[:/-](0[1-9]|1[0-2])[:/-](0[1-9]|[12]\d|3[01])[\sT_]?([01]\d|2[0-3])?[:_.-]?([0-5]\d)?[:_.-]?([0-5]\d)?(.*)$/);
+  if (exifMatch) {
+    const [, y, m, d, hh = "12", mm = "00", ss = "00", tz = ""] = exifMatch;
+    let isoCandidate = `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
+    if (tz && tz.trim()) {
+      isoCandidate += tz.trim();
+    } else {
+      isoCandidate += "Z";
+    }
+    const parsedExif = Date.parse(isoCandidate);
+    if (!Number.isNaN(parsedExif)) return new Date(parsedExif).toISOString();
+  }
+
+  const time = Date.parse(str);
   return Number.isNaN(time) ? null : new Date(time).toISOString();
 }
 
