@@ -26,8 +26,27 @@ writeFileSync(configPath, JSON.stringify({
 function getCapturedAtMetadata(customMetadata) {
   if (!customMetadata) return null;
   for (const [k, v] of Object.entries(customMetadata)) {
-    const lk = k.toLowerCase();
-    if (lk === "capturedat" || lk === "captured_at" || lk === "captured-at" || lk === "date" || lk === "x-photo-date") {
+    const cleanKey = k.toLowerCase().replace(/^x-amz-meta-|^x-goog-meta-/, "").trim();
+    if (
+      cleanKey === "capturedat" ||
+      cleanKey === "captured_at" ||
+      cleanKey === "captured-at" ||
+      cleanKey === "date" ||
+      cleanKey === "x-photo-date" ||
+      cleanKey === "createdat" ||
+      cleanKey === "created_at" ||
+      cleanKey === "creationdate" ||
+      cleanKey === "creation_date" ||
+      cleanKey === "date_taken" ||
+      cleanKey === "datetaken" ||
+      cleanKey === "timestamp" ||
+      cleanKey === "datetimeoriginal" ||
+      cleanKey === "date-time-original" ||
+      cleanKey === "datetime" ||
+      cleanKey === "created" ||
+      cleanKey === "originationdate" ||
+      cleanKey === "time"
+    ) {
       const parsed = new Date(v);
       if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
     }
