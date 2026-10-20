@@ -1,6 +1,6 @@
 //
 // Gallery module for PocketPic Web
-// Renders photo mosaic grouped by month, streak counters, multi-select bulk delete, privacy mode, and full-screen detail viewer with minimal SVG icons and R2 sync.
+// Renders photo mosaic grouped by month, streak counters, multi-select bulk delete, photo date editing, photo import, privacy mode, and full-screen detail viewer with R2 sync.
 //
 
 const Gallery = {
@@ -33,6 +33,13 @@ const Gallery = {
     }
     this.pruneObjectUrls();
     this.render();
+  },
+
+  toDatetimeLocal(isoDateStr) {
+    const d = new Date(isoDateStr);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   },
 
   calculateStreaks() {
@@ -219,6 +226,28 @@ const Gallery = {
     }
   },
 
+  async updatePhotoDate(id, newDateValue) {
+    if (!newDateValue) return;
+    try {
+      await Storage.updatePhotoDate(id, newDateValue);
+      await this.refresh();
+      this.openDetailModal(id);
+    } catch (e) {
+      alert(`Could not update photo date: ${e.message}`);
+    }
+  },
+
+  async importPhotos(fileList) {
+    if (!fileList || fileList.length === 0) return;
+    try {
+      const count = await Storage.importPhotos(fileList);
+      await this.refresh();
+      alert(`Imported ${count} photo(s).`);
+    } catch (e) {
+      alert(`Could not import photos: ${e.message}`);
+    }
+  },
+
   render() {
     if (!this.containerElement) return;
 
@@ -241,13 +270,15 @@ const Gallery = {
           <p class="page-subtitle">${subtitle}${syncFailed ? ' · <span class="sync-error">Sync failed</span>' : ''}</p>
         </div>
         <div class="toolbar">
+          <label class="btn btn-pill" for="gallery-import-input" title="Import photos with preserved capture dates">Import</label>
+          <input type="file" id="gallery-import-input" accept="image/*" multiple hidden>
           <button class="icon-btn ${syncFailed ? 'sync-error' : ''}" id="gallery-sync" title="${Storage.syncMessage || this.syncLabel()}" aria-label="${this.syncLabel()}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="${syncing ? 'spin' : ''}"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>
           </button>
           <button class="icon-btn ${this.isPrivacyMode ? 'active' : ''}" id="gallery-privacy-toggle" title="${this.isPrivacyMode ? 'Show photos' : 'Hide photos'}" aria-label="${this.isPrivacyMode ? 'Show photos' : 'Hide photos'}">
             ${this.isPrivacyMode
               ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A9.7 9.7 0 0 1 12 5c6 0 9.5 7 9.5 7a16.6 16.6 0 0 1-2.6 3.5M6.6 6.6A16.4 16.4 0 0 0 2.5 12s3.5 7 9.5 7a9.4 9.4 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
-              : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7z"/><circle cx="12" cy="12" r="3"/></svg>'}
+              : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7z"/><circle cx="12" cy="12" r="3"/></svg>'}
           </button>
           ${count > 0 ? `
             <button class="btn btn-pill ${this.isSelectionMode ? 'active' : ''}" id="gallery-select-toggle">
@@ -278,9 +309,10 @@ const Gallery = {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.8l1.5-2h6.4l1.5 2h1.8A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.5"/></svg>
           </div>
           <h2>No Photos Yet</h2>
-          <p>Take today’s photo. Photos from your other devices appear here after they sync.</p>
+          <p>Take today’s photo or import existing photos. Photos from your other devices appear here after they sync.</p>
           <div class="empty-actions">
             <button class="btn btn-primary" onclick="App.switchTab('camera')">Open Camera</button>
+            <label class="btn btn-secondary" for="gallery-import-input">Import Photos</label>
             <button class="btn btn-plain" onclick="Gallery.syncNow()">Sync Now</button>
           </div>
         </div>
@@ -326,6 +358,11 @@ const Gallery = {
   },
 
   attachEvents() {
+    const importInput = document.getElementById('gallery-import-input');
+    if (importInput) {
+      importInput.addEventListener('change', (e) => this.importPhotos(e.target.files));
+    }
+
     const syncBtn = document.getElementById('gallery-sync');
     if (syncBtn) {
       syncBtn.addEventListener('click', () => this.syncNow());
@@ -413,6 +450,8 @@ const Gallery = {
           ${nextPhoto ? `<button class="icon-btn glass nav-arrow nav-arrow-right" id="detail-next-btn" title="Newer photo" aria-label="Newer photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>` : ''}
         </div>
         <div class="meta-actions">
+          <input type="datetime-local" class="btn btn-glass" id="detail-date-input" value="${this.toDatetimeLocal(photo.date)}">
+          <button class="btn btn-glass" id="detail-save-date-btn">Save Date</button>
           <button class="btn btn-glass" id="detail-detect-eyes">Detect Eyes</button>
           <label class="btn btn-glass" for="detail-replace-input">Replace</label>
           <input type="file" id="detail-replace-input" accept="image/*" hidden>
@@ -426,6 +465,7 @@ const Gallery = {
     document.getElementById('detail-close').onclick = () => this.closeDetailModal();
     document.getElementById('detail-delete').onclick = () => this.deleteSinglePhoto(photo.id);
     document.getElementById('detail-replace-input').onchange = (e) => this.replaceSinglePhoto(photo.id, e.target.files[0]);
+    document.getElementById('detail-save-date-btn').onclick = () => this.updatePhotoDate(photo.id, document.getElementById('detail-date-input').value);
 
     if (prevPhoto) {
       document.getElementById('detail-prev-btn').onclick = () => this.openDetailModal(prevPhoto.id);

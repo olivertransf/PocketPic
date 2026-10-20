@@ -1,7 +1,7 @@
 //
 // Storage module for PocketPic Web
 // IndexedDB is the primary per-device storage.
-// Cloudflare R2 (via public bucket URL or Worker /api) provides shared remote sync when available.
+// Cloudflare R2 (via public bucket URL) provides shared remote sync when available.
 //
 
 const PHOTO_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
@@ -10,13 +10,6 @@ class LockedError extends Error {
   constructor() {
     super('Locked');
     this.name = 'LockedError';
-  }
-}
-
-class ServerNotFoundError extends Error {
-  constructor() {
-    super('Server API endpoint not found');
-    this.name = 'ServerNotFoundError';
   }
 }
 
@@ -67,22 +60,6 @@ const Storage = {
     return customUrl ? customUrl.trim().replace(/\/+$/, '') : '';
   },
 
-  async api(path, options = {}) {
-    const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', ...options });
-    if (response.status === 401) {
-      window.dispatchEvent(new CustomEvent('pocketpic:locked'));
-      throw new LockedError();
-    }
-    if (response.status === 404) {
-      throw new ServerNotFoundError();
-    }
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error || `Server returned ${response.status}`);
-    }
-    return response;
-  },
-
   setSyncState(state, message = '') {
     this.syncState = state;
     this.syncMessage = message;
@@ -130,6 +107,46 @@ const Storage = {
     return record;
   },
 
+  async updatePhotoDate(id, newDate) {
+    const existing = await this.getPhoto(id);
+    if (!existing) throw new Error('Photo not found');
+    const parsed = new Date(newDate);
+    if (Number.isNaN(parsed.getTime())) throw new Error('Invalid date');
+
+    const updatedRecord = {
+      ...existing,
+      date: parsed.toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    await this.putRecord(updatedRecord);
+    this.notifyPhotosChanged();
+    return updatedRecord;
+  },
+
+  async importPhotos(fileList) {
+    const files = Array.from(fileList || []);
+    let importedCount = 0;
+
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) continue;
+
+      let dateISO = null;
+      if (file.lastModified) {
+        const lm = new Date(file.lastModified);
+        if (!Number.isNaN(lm.getTime())) dateISO = lm.toISOString();
+      }
+
+      const canvas = await this.blobToCanvas(file);
+      await this.savePhoto(canvas, { date: dateISO });
+      importedCount++;
+    }
+
+    if (importedCount > 0) {
+      this.notifyPhotosChanged();
+    }
+    return importedCount;
+  },
+
   async replacePhoto(id, file) {
     const existing = await this.getPhoto(id);
     if (!existing) throw new Error('Photo not found');
@@ -142,23 +159,6 @@ const Storage = {
   },
 
   async deletePhotos(ids) {
-    const records = await Promise.all(ids.map((id) => this.getPhoto(id)));
-    const remoteRecords = records.filter((r) => r && r.updatedAt);
-    const remoteIds = remoteRecords.map((r) => r.id);
-
-    if (remoteIds.length > 0) {
-      try {
-        await this.api('/api/photos/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids: remoteIds })
-        });
-      } catch (e) {
-        if (!(e instanceof ServerNotFoundError)) {
-          console.warn('Remote delete warning:', e);
-        }
-      }
-    }
     for (const id of ids) await this.deleteRecord(id);
     this.notifyPhotosChanged();
     return true;
@@ -188,26 +188,16 @@ const Storage = {
       const remote = await this.fetchRemoteList();
 
       if (remote === null) {
-        this.setSyncState('idle', 'Local storage (no external server required)');
+        this.setSyncState('idle', 'Local storage mode');
         return false;
       }
 
       const remoteById = new Map(remote.map((photo) => [photo.id, photo]));
-      const local = await this.getAllPhotos();
-
-      for (const record of local) {
-        const neverSynced = !record.updatedAt && !remoteById.has(record.id);
-        if (record.pending || neverSynced) {
-          const uploaded = await this.uploadRecord(record);
-          remoteById.set(uploaded.id, uploaded);
-          changed = true;
-        }
-      }
-
       const localById = new Map((await this.getAllPhotos()).map((record) => [record.id, record]));
+
       const toDownload = [...remoteById.values()].filter((meta) => {
         const record = localById.get(meta.id);
-        return !record || (!record.pending && record.updatedAt !== meta.updatedAt);
+        return !record || record.updatedAt !== meta.updatedAt;
       });
 
       for (let i = 0; i < toDownload.length; i += 4) {
@@ -215,22 +205,13 @@ const Storage = {
         changed = true;
       }
 
-      for (const record of localById.values()) {
-        if (!record.pending && !remoteById.has(record.id)) {
-          await this.deleteRecord(record.id);
-          changed = true;
-        }
-      }
-
       this.setSyncState('idle');
     } catch (e) {
       if (e instanceof LockedError) {
         this.setSyncState('locked');
-      } else if (e instanceof ServerNotFoundError) {
-        this.setSyncState('idle', 'Local storage (no external server required)');
       } else {
-        console.warn('Sync failed:', e);
-        this.setSyncState('error', navigator.onLine === false ? 'Offline. Photos will upload when you reconnect.' : e.message);
+        console.warn('Sync notice:', e);
+        this.setSyncState('idle', 'Local storage mode');
       }
     }
 
@@ -240,85 +221,19 @@ const Storage = {
 
   async fetchRemoteList() {
     const r2Url = await this.getR2Url();
-    if (r2Url) {
-      try {
-        const res = await fetch(`${r2Url}/index/photos.json`, { cache: 'no-store' });
-        if (res.ok) {
-          const body = await res.json();
-          const list = Array.isArray(body) ? body : (Array.isArray(body?.photos) ? body.photos : []);
-          return list;
-        }
-      } catch (e) {
-        console.warn('Direct R2 index fetch warning:', e);
-      }
-    }
+    if (!r2Url) return null;
 
     try {
-      const response = await this.api('/api/photos');
-      const body = await response.json();
-      return Array.isArray(body.photos) ? body.photos : [];
-    } catch (e) {
-      if (e instanceof ServerNotFoundError) {
-        return null;
+      const res = await fetch(`${r2Url}/index/photos.json`, { cache: 'no-store' });
+      if (res.ok) {
+        const body = await res.json();
+        const list = Array.isArray(body) ? body : (Array.isArray(body?.photos) ? body.photos : []);
+        return list;
       }
-      throw e;
-    }
-  },
-
-  async uploadRecord(record) {
-    let id = record.id;
-    if (!PHOTO_ID_PATTERN.test(id)) {
-      await this.deleteRecord(id);
-      id = crypto.randomUUID();
-    }
-
-    const ext = this.extensionFor(record.blob.type || record.mimeType);
-    const key = `photos/${id}.${ext}`;
-    const contentType = record.blob.type || record.mimeType || 'image/jpeg';
-
-    const headers = {
-      'Content-Type': contentType,
-      'X-Photo-Date': record.date
-    };
-    if (record.width) headers['X-Photo-Width'] = String(record.width);
-    if (record.height) headers['X-Photo-Height'] = String(record.height);
-
-    try {
-      const response = await this.api(`/api/photos/${encodeURIComponent(id)}`, {
-        method: 'PUT',
-        headers,
-        body: record.blob
-      });
-      const { photo } = await response.json();
-      await this.putRecord({
-        ...record,
-        id: photo.id,
-        date: photo.date,
-        updatedAt: photo.updatedAt,
-        filename: photo.key.split('/').pop(),
-        pending: false
-      });
-      return photo;
     } catch (e) {
-      if (e instanceof ServerNotFoundError) {
-        await this.putRecord({
-          ...record,
-          id,
-          pending: false
-        });
-        return {
-          id,
-          key,
-          date: record.date,
-          mimeType: contentType,
-          width: record.width || null,
-          height: record.height || null,
-          size: record.blob.size,
-          updatedAt: record.updatedAt || new Date().toISOString()
-        };
-      }
-      throw e;
+      console.warn('Direct R2 index fetch warning:', e);
     }
+    return null;
   },
 
   async downloadPhoto(meta) {
@@ -331,16 +246,6 @@ const Storage = {
         if (res.ok) blob = await res.blob();
       } catch (e) {
         console.warn('Direct R2 photo download warning:', e);
-      }
-    }
-
-    if (!blob) {
-      try {
-        const response = await this.api(`/api/photos/${encodeURIComponent(meta.id)}`);
-        blob = await response.blob();
-      } catch (e) {
-        if (e instanceof ServerNotFoundError) return;
-        throw e;
       }
     }
 
@@ -430,7 +335,6 @@ const Storage = {
     });
   },
 
-  // Safari cannot encode WebP and silently returns PNG, so anything other than the requested type falls back to JPEG.
   encodeCanvas(canvas, preferredFormat, quality) {
     return new Promise((resolve, reject) => {
       canvas.toBlob((blob) => {
@@ -504,4 +408,3 @@ const Storage = {
 
 window.Storage = Storage;
 window.LockedError = LockedError;
-window.ServerNotFoundError = ServerNotFoundError;
