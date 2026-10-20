@@ -1,11 +1,12 @@
 // Usage: node scripts/set-capture-dates.mjs dates.json
 // dates.json maps bucket keys to ISO capture dates: { "IMG_0016.JPG": "2026-01-02T03:04:05.000Z" }
-// Rewrites each object in place with customMetadata.capturedAt, then drops the photo index so the Worker rebuilds it.
+// Rewrites each object in place with customMetadata.capturedAt, then rebuilds index/photos.json in R2 directly.
 
 import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getPlatformProxy } from "wrangler";
+import { rebuildBucketIndex } from "./rebuild-index.mjs";
 
 const datesPath = process.argv[2];
 if (!datesPath) {
@@ -67,7 +68,10 @@ try {
     console.log(`${updated} ${key} ${capturedAt.toISOString()}`);
   }
 
-  if (updated > 0) await env.PHOTOS.delete("index/photos.json");
+  if (updated > 0) {
+    console.log("Rebuilding index/photos.json in R2 bucket...");
+    await rebuildBucketIndex(env);
+  }
   console.log(`updated ${updated}, skipped ${skipped}`);
 } finally {
   await dispose();

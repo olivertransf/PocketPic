@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc -p worker"
+    "typecheck": "tsc -p worker",
+    "rebuild-index": "node scripts/rebuild-index.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261019.1",
