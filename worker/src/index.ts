@@ -179,15 +179,18 @@ async function putPhoto(request: Request, env: Env, id: string): Promise<Respons
   if (!request.body) return json({ error: "Empty body" }, 400);
 
   const key = `photos/${id}.${extension === "jpeg" ? "jpg" : extension}`;
+  const requestedDate = parseDate(request.headers.get("X-Photo-Date"));
+  const existingDate = requestedDate ? null : (await readIndex(env)).photos.find((photo) => photo.id === id)?.date;
+  const capturedAt = requestedDate ?? existingDate ?? new Date().toISOString();
   const object = await env.PHOTOS.put(key, request.body, {
     httpMetadata: { contentType },
+    customMetadata: { capturedAt },
   });
   if (object.size > MAX_UPLOAD_BYTES) {
     await env.PHOTOS.delete(key);
     return json({ error: "Photo too large" }, 413);
   }
 
-  const requestedDate = parseDate(request.headers.get("X-Photo-Date"));
   const width = parseDimension(request.headers.get("X-Photo-Width"));
   const height = parseDimension(request.headers.get("X-Photo-Height"));
   let saved: PhotoMeta | null = null;
@@ -199,7 +202,7 @@ async function putPhoto(request: Request, env: Env, id: string): Promise<Respons
     saved = {
       id,
       key,
-      date: requestedDate ?? existing?.date ?? new Date().toISOString(),
+      date: requestedDate ?? existing?.date ?? capturedAt,
       mimeType: contentType,
       width,
       height,
@@ -250,7 +253,7 @@ async function scanBucketForPhotos(env: Env): Promise<PhotoMeta[]> {
   const seen = new Set<string>();
   let cursor: string | undefined;
   do {
-    const listed = await env.PHOTOS.list({ cursor, include: ["httpMetadata"] });
+    const listed = await env.PHOTOS.list({ cursor, include: ["httpMetadata", "customMetadata"] });
     for (const object of listed.objects) {
       if (object.key.startsWith("index/") || object.key.startsWith("auth/")) continue;
       const extension = object.key.split(".").pop()?.toLowerCase() ?? "";
@@ -265,7 +268,7 @@ async function scanBucketForPhotos(env: Env): Promise<PhotoMeta[]> {
       photos.push({
         id,
         key: object.key,
-        date: dateFromKey(object.key) ?? object.uploaded.toISOString(),
+        date: parseDate(object.customMetadata?.capturedAt ?? null) ?? dateFromKey(object.key) ?? object.uploaded.toISOString(),
         mimeType: object.httpMetadata?.contentType ?? mimeType,
         width: null,
         height: null,

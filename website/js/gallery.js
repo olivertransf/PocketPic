@@ -16,6 +16,12 @@ const Gallery = {
     if (window.Storage) {
       this.isPrivacyMode = await Storage.getSetting('hidePhotosInGallery', false);
     }
+    document.addEventListener('keydown', (e) => {
+      if (!document.getElementById('photo-detail-modal')?.classList.contains('active')) return;
+      if (e.key === 'Escape') this.closeDetailModal();
+      if (e.key === 'ArrowLeft') document.getElementById('detail-prev-btn')?.click();
+      if (e.key === 'ArrowRight') document.getElementById('detail-next-btn')?.click();
+    });
     await this.refresh();
   },
 
@@ -218,105 +224,101 @@ const Gallery = {
 
     const { currentStreak, longestStreak } = this.calculateStreaks();
     const photoGroups = this.groupPhotosByMonth();
+    const count = this.photos.length;
+    const syncing = Storage.syncState === 'syncing';
+    const syncFailed = Storage.syncState === 'error';
+
+    const subtitle = [
+      `${count} ${count === 1 ? 'photo' : 'photos'}`,
+      currentStreak > 0 ? `${currentStreak}-day streak` : null,
+      longestStreak > 1 ? `best ${longestStreak}` : null
+    ].filter(Boolean).join(' · ');
 
     let html = `
-      <div class="gallery-header-bar">
-        <div class="gallery-stats">
-          <div class="stat-badge">
-            <span class="stat-value">${this.photos.length}</span>
-            <span class="stat-label">Photos</span>
-          </div>
-          <div class="stat-badge">
-            <span class="stat-value">${currentStreak}</span>
-            <span class="stat-label">Day Streak</span>
-          </div>
-          <div class="stat-badge">
-            <span class="stat-value">${longestStreak}</span>
-            <span class="stat-label">Best Streak</span>
-          </div>
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Library</h1>
+          <p class="page-subtitle">${subtitle}${syncFailed ? ' · <span class="sync-error">Sync failed</span>' : ''}</p>
         </div>
-
-        <div class="gallery-actions">
-          <button class="btn btn-secondary ${Storage.syncState === 'error' ? 'sync-error' : ''}" id="gallery-sync" title="${Storage.syncMessage || 'Sync with your other devices'}">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="${Storage.syncState === 'syncing' ? 'spin' : ''}"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-            ${this.syncLabel()}
+        <div class="toolbar">
+          <button class="icon-btn ${syncFailed ? 'sync-error' : ''}" id="gallery-sync" title="${Storage.syncMessage || this.syncLabel()}" aria-label="${this.syncLabel()}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="${syncing ? 'spin' : ''}"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>
           </button>
-
-          <button class="btn btn-secondary ${this.isPrivacyMode ? 'active' : ''}" id="gallery-privacy-toggle" title="Toggle Privacy Mode">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-            ${this.isPrivacyMode ? 'Hidden' : 'Hide'}
+          <button class="icon-btn ${this.isPrivacyMode ? 'active' : ''}" id="gallery-privacy-toggle" title="${this.isPrivacyMode ? 'Show photos' : 'Hide photos'}" aria-label="${this.isPrivacyMode ? 'Show photos' : 'Hide photos'}">
+            ${this.isPrivacyMode
+              ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A9.7 9.7 0 0 1 12 5c6 0 9.5 7 9.5 7a16.6 16.6 0 0 1-2.6 3.5M6.6 6.6A16.4 16.4 0 0 0 2.5 12s3.5 7 9.5 7a9.4 9.4 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
+              : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7z"/><circle cx="12" cy="12" r="3"/></svg>'}
           </button>
-
-          <button class="btn btn-secondary ${this.isSelectionMode ? 'active' : ''}" id="gallery-select-toggle">
-            ${this.isSelectionMode ? 'Cancel' : 'Select'}
-          </button>
-
-          ${this.isSelectionMode ? `
-            <button class="btn btn-secondary" id="gallery-select-all">
-              ${this.selectedPhotoIds.size === this.photos.length ? 'Deselect All' : 'Select All'}
-            </button>
-            <button class="btn btn-danger" id="gallery-delete-selected" ${this.selectedPhotoIds.size === 0 ? 'disabled' : ''}>
-              Delete (${this.selectedPhotoIds.size})
+          ${count > 0 ? `
+            <button class="btn btn-pill ${this.isSelectionMode ? 'active' : ''}" id="gallery-select-toggle">
+              ${this.isSelectionMode ? 'Done' : 'Select'}
             </button>
           ` : ''}
         </div>
       </div>
     `;
 
-    if (this.photos.length === 0) {
+    if (this.isSelectionMode) {
+      const selected = this.selectedPhotoIds.size;
+      html += `
+        <div class="selection-bar">
+          <button class="btn btn-plain" id="gallery-select-all">
+            ${selected === count ? 'Deselect All' : 'Select All'}
+          </button>
+          <span class="selection-count">${selected === 0 ? 'Select Items' : `${selected} Selected`}</span>
+          <button class="btn btn-plain danger" id="gallery-delete-selected" ${selected === 0 ? 'disabled' : ''}>Delete</button>
+        </div>
+      `;
+    }
+
+    if (count === 0) {
       html += `
         <div class="empty-state">
           <div class="empty-icon">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.8l1.5-2h6.4l1.5 2h1.8A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.5"/></svg>
           </div>
-          <h3 style="font-size: 1.3rem; font-weight: 600; margin-bottom: 6px;">No Photos Yet</h3>
-          <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 20px;">Take today’s photo. Photos from your other devices appear here after they sync.</p>
-          <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
+          <h2>No Photos Yet</h2>
+          <p>Take today’s photo. Photos from your other devices appear here after they sync.</p>
+          <div class="empty-actions">
             <button class="btn btn-primary" onclick="App.switchTab('camera')">Open Camera</button>
-            <button class="btn btn-secondary" onclick="Gallery.syncNow()">Sync Now</button>
+            <button class="btn btn-plain" onclick="Gallery.syncNow()">Sync Now</button>
           </div>
         </div>
       `;
     } else {
-      html += `<div class="gallery-grid-wrapper">`;
-
       for (const [monthKey, monthPhotos] of Object.entries(photoGroups)) {
         html += `
-          <div class="month-section">
-            <h3 class="month-title">${monthKey}</h3>
+          <section class="month-section">
+            <h2 class="month-title">${monthKey}</h2>
             <div class="mosaic-grid">
         `;
 
         for (const photo of monthPhotos) {
           const isSelected = this.selectedPhotoIds.has(photo.id);
-          const imgUrl = this.isPrivacyMode ? '' : this.photoUrl(photo);
+          const date = new Date(photo.date);
 
           html += `
-            <div class="mosaic-tile ${isSelected ? 'selected' : ''} ${photo.pending ? 'pending' : ''}" data-id="${photo.id}">
+            <div class="mosaic-tile ${isSelected ? 'selected' : ''} ${photo.pending ? 'pending' : ''}" data-id="${photo.id}" role="button" tabindex="0">
               ${this.isPrivacyMode ? `
-                <div class="privacy-placeholder">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                </div>
+                <div class="privacy-placeholder"></div>
               ` : `
-                <img src="${imgUrl}" alt="Photo ${new Date(photo.date).toLocaleDateString()}" loading="lazy">
+                <img src="${this.photoUrl(photo)}" alt="Photo ${date.toLocaleDateString()}" loading="lazy" decoding="async">
               `}
+              <span class="tile-date">${date.getDate()}</span>
               ${this.isSelectionMode ? `
-                <div class="selection-badge ${isSelected ? 'checked' : ''}">
-                  ${isSelected ? '✓' : ''}
-                </div>
+                <span class="selection-badge ${isSelected ? 'checked' : ''}">
+                  ${isSelected ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' : ''}
+                </span>
               ` : ''}
-              <div class="tile-date">${new Date(photo.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</div>
             </div>
           `;
         }
 
         html += `
             </div>
-          </div>
+          </section>
         `;
       }
-
-      html += `</div>`;
     }
 
     this.containerElement.innerHTML = html;
@@ -352,11 +354,18 @@ const Gallery = {
     const tiles = this.containerElement.querySelectorAll('.mosaic-tile');
     tiles.forEach(tile => {
       const id = tile.dataset.id;
-      tile.addEventListener('click', () => {
+      const activate = () => {
         if (this.isSelectionMode) {
           this.toggleSelectPhoto(id);
         } else {
           this.openDetailModal(id);
+        }
+      };
+      tile.addEventListener('click', activate);
+      tile.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          activate();
         }
       });
     });
@@ -376,7 +385,7 @@ const Gallery = {
     if (!modal) {
       modal = document.createElement('div');
       modal.id = 'photo-detail-modal';
-      modal.className = 'modal-overlay';
+      modal.className = 'modal-overlay photo-viewer';
       document.body.appendChild(modal);
     }
 
@@ -391,23 +400,23 @@ const Gallery = {
     });
 
     modal.innerHTML = `
-      <div class="modal-content photo-detail-content">
-        <button class="modal-close" id="detail-close">&times;</button>
-        <div class="photo-detail-frame">
-          ${prevPhoto ? `<button class="nav-arrow nav-arrow-left" id="detail-prev-btn" title="Older Photo">&lsaquo;</button>` : ''}
-          <img src="${imgUrl}" alt="Full Photo">
-          ${nextPhoto ? `<button class="nav-arrow nav-arrow-right" id="detail-next-btn" title="Newer Photo">&rsaquo;</button>` : ''}
+      <div class="photo-detail-content">
+        <div class="photo-detail-top">
+          <div class="meta-date">${formattedDate}</div>
+          <button class="icon-btn glass" id="detail-close" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
         </div>
-        <div class="photo-detail-meta">
-          <div class="meta-date" style="font-size: 0.88rem; color: var(--text-primary); font-weight: 500;">
-            ${formattedDate}
-          </div>
-          <div class="meta-actions">
-            <button class="btn btn-secondary" id="detail-detect-eyes">Detect Eyes</button>
-            <label class="btn btn-secondary" for="detail-replace-input">Replace</label>
-            <input type="file" id="detail-replace-input" accept="image/*" hidden>
-            <button class="btn btn-danger" id="detail-delete">Delete</button>
-          </div>
+        <div class="photo-detail-frame">
+          <img src="${imgUrl}" alt="Photo from ${formattedDate}">
+          ${prevPhoto ? `<button class="icon-btn glass nav-arrow nav-arrow-left" id="detail-prev-btn" title="Older photo" aria-label="Older photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>` : ''}
+          ${nextPhoto ? `<button class="icon-btn glass nav-arrow nav-arrow-right" id="detail-next-btn" title="Newer photo" aria-label="Newer photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>` : ''}
+        </div>
+        <div class="meta-actions">
+          <button class="btn btn-glass" id="detail-detect-eyes">Detect Eyes</button>
+          <label class="btn btn-glass" for="detail-replace-input">Replace</label>
+          <input type="file" id="detail-replace-input" accept="image/*" hidden>
+          <button class="btn btn-glass danger" id="detail-delete">Delete</button>
         </div>
       </div>
     `;

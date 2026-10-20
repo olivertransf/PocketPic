@@ -1,0 +1,61 @@
+{
+  "fill" : {
+    "solid" : "srgb:1.00000,1.00000,1.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "image-name" : "Shape 17.svg",
+          "name" : "Shape 17",
+          "position" : {
+            "scale" : 0.66,
+            "translation-in-points" : [
+              196.8359375,
+              -193.890625
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "solid" : "srgb:0.00000,0.32852,0.57488,1.00000"
+          },
+          "image-name" : "Shape 29.svg",
+          "name" : "Shape 29",
+          "position" : {
+            "scale" : 3.01,
+            "translation-in-points" : [
+              -1.078125,
+              0.828125
+            ]
+          }
+        },
+        {
+          "image-name" : "Shape 69.svg",
+          "name" : "Shape 69",
+          "position" : {
+            "scale" : 1.39,
+            "translation-in-points" : [
+              -1464.875,
+              82
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

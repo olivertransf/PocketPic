@@ -5,227 +5,194 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="PocketPic Web — Daily photo journal with ghost alignment overlay, Cloudflare R2 storage, and time-lapse video export.">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="theme-color" content="#0d0d0f">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>PocketPic — Daily Photo Journal</title>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>PocketPic</title>
   <link rel="icon" href="images/favicon.png" type="image/png">
   <link rel="apple-touch-icon" href="images/app-icon.png">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body class="locked" data-tab="library">
 
-  <!-- Top Application Header -->
   <header class="app-header">
     <div class="header-container">
       <a href="#" class="brand">
-        <img src="images/app-icon.png" alt="PocketPic Icon" class="brand-icon">
+        <img src="images/app-icon.png" alt="" class="brand-icon">
         <span>PocketPic</span>
       </a>
 
-      <!-- Navigation Tabs -->
       <nav class="nav-tabs" aria-label="Main Navigation">
         <button class="nav-btn active" data-tab="library">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M20.4 14.5L16 10l-6 6-3-3L3.6 16.5"/></svg>
-          Library
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="9" cy="9" r="1.6"/><path d="M21 15l-4.5-4.5L7 20"/></svg>
+          <span>Library</span>
         </button>
         <button class="nav-btn" data-tab="camera">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          Camera
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.8l1.5-2h6.4l1.5 2h1.8A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.5"/></svg>
+          <span>Camera</span>
         </button>
         <button class="nav-btn" data-tab="export">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
-          Export
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M10 9.5v5l4-2.5z"/></svg>
+          <span>Export</span>
         </button>
         <button class="nav-btn" data-tab="settings">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Settings
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>
+          <span>Settings</span>
         </button>
       </nav>
 
-      <button class="lock-btn" id="header-lock-btn" title="Lock App">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        Lock
+      <button class="icon-btn lock-btn" id="header-lock-btn" title="Lock" aria-label="Lock">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
       </button>
     </div>
   </header>
 
-  <!-- Main View Container -->
   <main class="app-main">
 
-    <!-- Tab 1: Library / Gallery -->
     <section id="tab-library" class="tab-pane active">
-      <div id="gallery-container">
-        <!-- Rendered dynamically by Gallery.js -->
-      </div>
+      <div id="gallery-container"></div>
     </section>
 
-    <!-- Tab 2: Camera & Ghost Viewfinder -->
     <section id="tab-camera" class="tab-pane">
       <div class="camera-container">
         <div class="viewfinder-wrapper">
           <video id="viewfinder-video" class="viewfinder-video" autoplay playsinline muted></video>
           <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
-          <div id="camera-resolution-badge" class="camera-res-badge" style="display:none;"></div>
+          <div id="camera-resolution-badge" class="camera-res-badge" style="display: none;"></div>
         </div>
 
         <div class="opacity-slider-box">
-          <span style="font-size: 0.82rem; color: var(--text-secondary); font-weight: 500;">Ghost Overlay</span>
-          <input type="range" id="camera-opacity-range" min="0.1" max="1.0" step="0.05" value="0.4">
-          <button class="camera-tool-btn" id="camera-overlay-btn" title="Toggle Ghost Overlay">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
+          <span class="slider-label">Ghost</span>
+          <input type="range" id="camera-opacity-range" min="0.1" max="1.0" step="0.05" value="0.4" aria-label="Ghost overlay opacity">
         </div>
 
         <div class="camera-controls">
-          <button class="camera-tool-btn" id="camera-switch-btn" title="Switch Camera">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0-4.4-3.6-8-8-8s-8 3.6-8 8h3l-4 4-4-4h3c0-5.5 4.5-10 10-10s10 4.5 10 10h-3z"/><path d="M4 14c0 4.4 3.6 8 8 8s8-3.6 8-8h-3l4-4 4 4h-3c0 5.5-4.5 10-10 10S2 19.5 2 14h3z"/></svg>
+          <button class="icon-btn camera-tool-btn" id="camera-switch-btn" title="Switch camera" aria-label="Switch camera">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>
           </button>
-          <button class="shutter-btn" id="camera-shutter-btn" title="Take Photo">
-            <div class="shutter-inner"></div>
+          <button class="shutter-btn" id="camera-shutter-btn" title="Take photo" aria-label="Take photo">
+            <span class="shutter-inner"></span>
           </button>
-          <div style="width: 46px;"></div> <!-- Spacer -->
+          <button class="icon-btn camera-tool-btn" id="camera-overlay-btn" title="Show or hide ghost" aria-label="Show or hide ghost">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="13" height="13" rx="3"/><rect x="8" y="8" width="13" height="13" rx="3" opacity="0.55"/></svg>
+          </button>
         </div>
       </div>
     </section>
 
-    <!-- Tab 3: Time-lapse Export -->
     <section id="tab-export" class="tab-pane">
-      <div class="export-card">
-        <h2 style="font-size: 1.3rem;">Export Time-lapse Video</h2>
-        <p style="color: var(--text-secondary); font-size: 0.88rem;">
-          Generate a time-lapse video montage from your photo series with optional face alignment.
-        </p>
-
-        <div class="setting-group" style="padding:0; background:transparent; border:none;">
-          <label style="font-weight: 500; font-size: 0.9rem;">Frame Rate (FPS)</label>
-          <div class="fps-options">
-            <button class="fps-btn" data-fps="5">5 FPS</button>
-            <button class="fps-btn active" data-fps="10">10 FPS</button>
-            <button class="fps-btn" data-fps="15">15 FPS</button>
-            <button class="fps-btn" data-fps="24">24 FPS</button>
-            <button class="fps-btn" data-fps="30">30 FPS</button>
+      <div class="page narrow">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Export</h1>
+            <p class="page-subtitle">Turn your series into a time-lapse.</p>
           </div>
         </div>
 
-        <div class="setting-row">
-          <div class="setting-info">
-            <label>Align Eyes</label>
-            <p>Centers eye landmarks across frames for consistent video framing.</p>
+        <div class="list-section">
+          <div class="list-header">Frame rate</div>
+          <div class="segmented fps-options" role="group" aria-label="Frame rate">
+            <button class="fps-btn" data-fps="5">5</button>
+            <button class="fps-btn active" data-fps="10">10</button>
+            <button class="fps-btn" data-fps="15">15</button>
+            <button class="fps-btn" data-fps="24">24</button>
+            <button class="fps-btn" data-fps="30">30</button>
           </div>
-          <div class="setting-control">
-            <input type="checkbox" id="export-align-eyes-toggle" checked style="width: 18px; height: 18px; accent-color: var(--text-primary);">
-          </div>
+          <div class="list-footer">Frames per second in the exported video.</div>
         </div>
 
-        <button class="btn btn-primary" id="start-export-btn" style="width: 100%; padding: 14px;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Generate Video Montage
-        </button>
+        <div class="list-section">
+          <div class="list-group">
+            <label class="list-row" for="export-align-eyes-toggle">
+              <span class="row-label">Align eyes</span>
+              <input type="checkbox" class="switch" id="export-align-eyes-toggle" checked>
+            </label>
+          </div>
+          <div class="list-footer">Keeps your eyes in the same spot in every frame.</div>
+        </div>
+
+        <button class="btn btn-primary btn-large" id="start-export-btn">Create Time-lapse</button>
 
         <div id="export-progress-box" class="export-progress-box" style="display: none;">
-          <div class="progress-bar">
-            <div id="export-progress-fill" class="progress-fill"></div>
-          </div>
-          <p id="export-progress-status" style="font-size: 0.82rem; color: var(--text-secondary); text-align: center;">Preparing frames...</p>
+          <div class="progress-bar"><div id="export-progress-fill" class="progress-fill"></div></div>
+          <p id="export-progress-status" class="muted center">Preparing frames…</p>
         </div>
 
-        <div id="export-result-box" style="display: none; text-align: center; margin-top: 14px;">
-          <video id="export-video-preview" controls style="width: 100%; max-height: 320px; border-radius: var(--radius-md); background:#000; margin-bottom: 14px;"></video>
-          <a id="export-download-btn" class="btn btn-primary" style="width: 100%; text-decoration: none;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download Video Montage
-          </a>
+        <div id="export-result-box" class="export-result" style="display: none;">
+          <video id="export-video-preview" controls playsinline></video>
+          <a id="export-download-btn" class="btn btn-secondary btn-large">Download</a>
         </div>
       </div>
     </section>
 
-    <!-- Tab 4: Settings -->
     <section id="tab-settings" class="tab-pane">
-      <div class="settings-list">
-        <!-- Private Passphrase Section -->
-        <div class="settings-group">
-          <div class="group-title">Passphrase</div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <label>Change Passphrase</label>
-              <p>One passphrase opens this journal on every device. Changing it signs out your other devices.</p>
-            </div>
-          </div>
-          <div class="inline-form">
-            <input type="password" id="settings-passphrase-input" placeholder="New passphrase" autocomplete="new-password">
-            <button class="btn btn-primary" id="settings-save-passphrase">Save</button>
+      <div class="page narrow">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">Settings</h1>
           </div>
         </div>
 
-        <!-- Camera Overlay Settings -->
-        <div class="settings-group">
-          <div class="group-title">Camera & Compression</div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <label>Default Overlay Opacity</label>
-              <p>Default transparency level for the previous shot alignment overlay.</p>
-            </div>
-            <div class="setting-control">
-              <input type="range" id="settings-opacity-range" min="0.1" max="1.0" step="0.1" value="0.4">
+        <div class="list-section">
+          <div class="list-header">Sync</div>
+          <div class="list-group">
+            <div class="list-row">
+              <div class="row-stack">
+                <span class="row-label">Cloud library</span>
+                <span class="row-detail" id="settings-sync-status">Not synced yet.</span>
+              </div>
+              <button class="btn btn-plain" id="settings-sync-now">Sync Now</button>
             </div>
           </div>
+          <div class="list-footer">Photos are stored in your private Cloudflare R2 bucket and sync to every device you unlock.</div>
+        </div>
 
-          <div class="setting-row">
-            <div class="setting-info">
-              <label>Image Compression Quality</label>
-              <p>WebP/JPEG quality factor for stored photos.</p>
+        <div class="list-section">
+          <div class="list-header">Camera</div>
+          <div class="list-group">
+            <div class="list-row">
+              <span class="row-label">Ghost opacity</span>
+              <input type="range" id="settings-opacity-range" min="0.1" max="1.0" step="0.1" value="0.4" aria-label="Ghost opacity">
             </div>
-            <div class="setting-control">
-              <select id="settings-quality-select">
-                <option value="0.7">Low (0.70)</option>
-                <option value="0.85" selected>Optimized WebP (0.85)</option>
-                <option value="0.95">High Native (0.95)</option>
+            <div class="list-row">
+              <span class="row-label">Photo quality</span>
+              <select id="settings-quality-select" aria-label="Photo quality">
+                <option value="0.7">Small</option>
+                <option value="0.85" selected>Balanced</option>
+                <option value="0.95">High</option>
               </select>
             </div>
           </div>
         </div>
 
-        <!-- Sync -->
-        <div class="settings-group">
-          <div class="group-title">Sync</div>
-          <div class="setting-row">
-            <div class="setting-info">
-              <label>Cloud Library</label>
-              <p>Photos are stored in your private Cloudflare R2 bucket and sync to every device you unlock.</p>
-              <p id="settings-sync-status">Not synced yet.</p>
-            </div>
-            <div class="setting-control">
-              <button class="btn btn-secondary" id="settings-sync-now">Sync Now</button>
+        <div class="list-section">
+          <div class="list-header">Passphrase</div>
+          <div class="list-group">
+            <div class="list-row">
+              <input type="password" class="row-input" id="settings-passphrase-input" placeholder="New passphrase" autocomplete="new-password">
+              <button class="btn btn-plain" id="settings-save-passphrase">Change</button>
             </div>
           </div>
+          <div class="list-footer">One passphrase opens this journal on every device. Changing it signs out your other devices.</div>
         </div>
       </div>
     </section>
 
   </main>
 
-  <!-- Passphrase Security Lock Overlay Modal -->
-  <div class="modal-overlay active" id="passphrase-lock-overlay">
-    <div class="modal-content">
-      <div class="lock-screen-box">
-        <div class="lock-icon-wrapper">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        </div>
-        <div>
-          <h2 style="font-size: 1.25rem;">Private PocketPic</h2>
-          <p id="unlock-passphrase-desc" style="color: var(--text-secondary); font-size: 0.88rem; margin-top: 4px;">Enter your passphrase to access your journal.</p>
-        </div>
-        <input type="password" id="unlock-passphrase-input" class="passphrase-input" placeholder="Passphrase" autocomplete="current-password" autofocus>
-        <div id="unlock-passphrase-error" style="color: var(--danger-color); font-size: 0.82rem; display: none;"></div>
-        <button class="btn btn-primary" id="unlock-passphrase-btn" style="width: 100%; padding: 12px;">
-          Unlock Journal
-        </button>
-      </div>
+  <div class="modal-overlay lock-overlay active" id="passphrase-lock-overlay">
+    <div class="lock-screen-box">
+      <img src="images/app-icon.png" alt="" class="lock-icon">
+      <h1 class="lock-title">PocketPic</h1>
+      <p id="unlock-passphrase-desc" class="muted">Enter your passphrase to open your journal.</p>
+      <input type="password" id="unlock-passphrase-input" class="passphrase-input" placeholder="Passphrase" autocomplete="current-password" autofocus>
+      <div id="unlock-passphrase-error" class="error-text" style="display: none;"></div>
+      <button class="btn btn-primary btn-large" id="unlock-passphrase-btn">Unlock Journal</button>
     </div>
   </div>
 
-  <!-- JS Module Scripts -->
   <script src="js/auth.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/camera.js"></script>
