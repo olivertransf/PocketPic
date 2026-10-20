@@ -34,7 +34,7 @@ export async function rebuildBucketIndex(env) {
       let capturedAt = getCapturedAtMetadata(object.customMetadata) ?? dateFromKey(object.key);
       if (!capturedAt) {
         try {
-          const header = await env.PHOTOS.get(object.key, { range: { length: 65536 } });
+          const header = await env.PHOTOS.get(object.key, { range: { length: 131072 } });
           if (header) {
             const buf = new Uint8Array(await header.arrayBuffer());
             capturedAt = parseExifDate(buf);
@@ -77,7 +77,13 @@ function getCapturedAtMetadata(customMetadata) {
       lowerKey === "captured_at" ||
       lowerKey === "captured-at" ||
       lowerKey === "date" ||
-      lowerKey === "x-photo-date"
+      lowerKey === "x-photo-date" ||
+      lowerKey === "createdat" ||
+      lowerKey === "created_at" ||
+      lowerKey === "creationdate" ||
+      lowerKey === "date_taken" ||
+      lowerKey === "datetaken" ||
+      lowerKey === "timestamp"
     ) {
       const parsed = parseDate(value);
       if (parsed) return parsed;
@@ -89,7 +95,7 @@ function getCapturedAtMetadata(customMetadata) {
 function dateFromKey(key) {
   const filename = key.split("/").pop() ?? key;
 
-  const fullDateTimeIso = filename.match(/(20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_-]([0-5]\d)[:_-]([0-5]\d)/);
+  const fullDateTimeIso = filename.match(/(20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_.-]([0-5]\d)[:_.-]([0-5]\d)/);
   if (fullDateTimeIso) {
     const [, y, m, d, hh, mm, ss] = fullDateTimeIso;
     return parseDate(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
@@ -101,9 +107,14 @@ function dateFromKey(key) {
     return parseDate(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
   }
 
-  const isoDate = filename.match(/(20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])/);
+  const isoDate = filename.match(/(20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])/);
   if (isoDate) {
     return parseDate(`${isoDate[1]}-${isoDate[2]}-${isoDate[3]}T12:00:00Z`);
+  }
+
+  const usDate = filename.match(/(0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_./](20\d{2})/);
+  if (usDate) {
+    return parseDate(`${usDate[3]}-${usDate[1]}-${usDate[2]}T12:00:00Z`);
   }
 
   const compactDate = filename.match(/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/);
@@ -124,32 +135,71 @@ function parseExifDate(arrayBuffer) {
   const bytes = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
   if (bytes.length < 14) return null;
 
-  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset < bytes.length - 4) {
+      if (bytes[offset] !== 0xff) break;
+      const marker = bytes[offset + 1];
+      if (marker === 0xda || marker === 0xd9) break;
 
-  let offset = 2;
-  while (offset < bytes.length - 4) {
-    if (bytes[offset] !== 0xff) break;
-    const marker = bytes[offset + 1];
-    if (marker === 0xda || marker === 0xd9) break;
-
-    const length = (bytes[offset + 2] << 8) | bytes[offset + 3];
-    if (marker === 0xe1) {
-      const app1Offset = offset + 4;
-      if (
-        app1Offset + 6 <= bytes.length &&
-        bytes[app1Offset] === 0x45 &&
-        bytes[app1Offset + 1] === 0x78 &&
-        bytes[app1Offset + 2] === 0x69 &&
-        bytes[app1Offset + 3] === 0x66 &&
-        bytes[app1Offset + 4] === 0x00 &&
-        bytes[app1Offset + 5] === 0x00
-      ) {
-        const tiffOffset = app1Offset + 6;
-        return parseTiffExifDate(bytes, tiffOffset);
+      const length = (bytes[offset + 2] << 8) | bytes[offset + 3];
+      if (marker === 0xe1) {
+        const app1Offset = offset + 4;
+        if (
+          app1Offset + 6 <= bytes.length &&
+          bytes[app1Offset] === 0x45 &&
+          bytes[app1Offset + 1] === 0x78 &&
+          bytes[app1Offset + 2] === 0x69 &&
+          bytes[app1Offset + 3] === 0x66 &&
+          bytes[app1Offset + 4] === 0x00 &&
+          bytes[app1Offset + 5] === 0x00
+        ) {
+          return parseTiffExifDate(bytes, app1Offset + 6);
+        }
       }
+      offset += 2 + length;
     }
-    offset += 2 + length;
   }
+
+  if (
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    let offset = 12;
+    while (offset < bytes.length - 8) {
+      const chunkType = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+      const chunkSize = (bytes[offset + 4] | (bytes[offset + 5] << 8) | (bytes[offset + 6] << 16) | (bytes[offset + 7] << 24)) >>> 0;
+      const payloadOffset = offset + 8;
+      if (chunkType === "EXIF" && payloadOffset < bytes.length) {
+        if (
+          payloadOffset + 6 <= bytes.length &&
+          bytes[payloadOffset] === 0x45 && bytes[payloadOffset + 1] === 0x78 &&
+          bytes[payloadOffset + 2] === 0x69 && bytes[payloadOffset + 3] === 0x66
+        ) {
+          return parseTiffExifDate(bytes, payloadOffset + 6);
+        }
+        return parseTiffExifDate(bytes, payloadOffset);
+      }
+      offset += 8 + chunkSize + (chunkSize % 2);
+    }
+  }
+
+  if (
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
+  ) {
+    let offset = 8;
+    while (offset < bytes.length - 8) {
+      const chunkSize = ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
+      const chunkType = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+      const payloadOffset = offset + 8;
+      if (chunkType === "eXIf" && payloadOffset < bytes.length) {
+        return parseTiffExifDate(bytes, payloadOffset);
+      }
+      offset += 12 + chunkSize;
+    }
+  }
+
   return null;
 }
 
