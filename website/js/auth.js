@@ -43,7 +43,7 @@ const Auth = {
         const body = await response.json();
         return { ok: true, created: !!body.created };
       }
-      if (response.status !== 404) {
+      if (response.status !== 404 && response.status !== 501) {
         const body = await response.json().catch(() => ({}));
         return { ok: false, error: body.error || `Server returned ${response.status}` };
       }
@@ -81,7 +81,7 @@ const Auth = {
         body: JSON.stringify({ passphrase: value })
       });
       if (response.ok) return { ok: true };
-      if (response.status !== 404) {
+      if (response.status !== 404 && response.status !== 501) {
         const body = await response.json().catch(() => ({}));
         return { ok: false, error: body.error || `Server returned ${response.status}` };
       }

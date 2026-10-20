@@ -1,6 +1,7 @@
 //
 // Storage module for PocketPic Web
-// IndexedDB is a per-device cache. The R2 bucket, reached through the Worker at /api, is the shared copy.
+// IndexedDB is the primary per-device storage.
+// Cloudflare R2 (via public bucket URL or Worker /api) provides shared remote sync when available.
 //
 
 const PHOTO_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
@@ -9,6 +10,13 @@ class LockedError extends Error {
   constructor() {
     super('Locked');
     this.name = 'LockedError';
+  }
+}
+
+class ServerNotFoundError extends Error {
+  constructor() {
+    super('Server API endpoint not found');
+    this.name = 'ServerNotFoundError';
   }
 }
 
@@ -53,11 +61,20 @@ const Storage = {
     });
   },
 
+  async getR2Url() {
+    if (window.POCKETPIC_R2_URL) return window.POCKETPIC_R2_URL.trim().replace(/\/+$/, '');
+    const customUrl = await this.getSetting('r2Url', null);
+    return customUrl ? customUrl.trim().replace(/\/+$/, '') : '';
+  },
+
   async api(path, options = {}) {
     const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', ...options });
     if (response.status === 401) {
       window.dispatchEvent(new CustomEvent('pocketpic:locked'));
       throw new LockedError();
+    }
+    if (response.status === 404) {
+      throw new ServerNotFoundError();
     }
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
@@ -118,13 +135,21 @@ const Storage = {
 
   async deletePhotos(ids) {
     const records = await Promise.all(ids.map((id) => this.getPhoto(id)));
-    const remoteIds = records.filter((r) => r && r.updatedAt).map((r) => r.id);
+    const remoteRecords = records.filter((r) => r && r.updatedAt);
+    const remoteIds = remoteRecords.map((r) => r.id);
+
     if (remoteIds.length > 0) {
-      await this.api('/api/photos/delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: remoteIds })
-      });
+      try {
+        await this.api('/api/photos/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: remoteIds })
+        });
+      } catch (e) {
+        if (!(e instanceof ServerNotFoundError)) {
+          console.warn('Remote delete warning:', e);
+        }
+      }
     }
     for (const id of ids) await this.deleteRecord(id);
     this.notifyPhotosChanged();
@@ -153,6 +178,12 @@ const Storage = {
 
     try {
       const remote = await this.fetchRemoteList();
+
+      if (remote === null) {
+        this.setSyncState('idle', 'Local storage (no external server required)');
+        return false;
+      }
+
       const remoteById = new Map(remote.map((photo) => [photo.id, photo]));
       const local = await this.getAllPhotos();
 
@@ -187,6 +218,8 @@ const Storage = {
     } catch (e) {
       if (e instanceof LockedError) {
         this.setSyncState('locked');
+      } else if (e instanceof ServerNotFoundError) {
+        this.setSyncState('idle', 'Local storage (no external server required)');
       } else {
         console.warn('Sync failed:', e);
         this.setSyncState('error', navigator.onLine === false ? 'Offline. Photos will upload when you reconnect.' : e.message);
@@ -198,9 +231,30 @@ const Storage = {
   },
 
   async fetchRemoteList() {
-    const response = await this.api('/api/photos');
-    const body = await response.json();
-    return Array.isArray(body.photos) ? body.photos : [];
+    const r2Url = await this.getR2Url();
+    if (r2Url) {
+      try {
+        const res = await fetch(`${r2Url}/index/photos.json`, { cache: 'no-store' });
+        if (res.ok) {
+          const body = await res.json();
+          const list = Array.isArray(body) ? body : (Array.isArray(body?.photos) ? body.photos : []);
+          return list;
+        }
+      } catch (e) {
+        console.warn('Direct R2 index fetch warning:', e);
+      }
+    }
+
+    try {
+      const response = await this.api('/api/photos');
+      const body = await response.json();
+      return Array.isArray(body.photos) ? body.photos : [];
+    } catch (e) {
+      if (e instanceof ServerNotFoundError) {
+        return null;
+      }
+      throw e;
+    }
   },
 
   async uploadRecord(record) {
@@ -210,33 +264,80 @@ const Storage = {
       id = crypto.randomUUID();
     }
 
+    const ext = this.extensionFor(record.blob.type || record.mimeType);
+    const key = `photos/${id}.${ext}`;
+    const contentType = record.blob.type || record.mimeType || 'image/jpeg';
+
     const headers = {
-      'Content-Type': record.blob.type || record.mimeType || 'image/jpeg',
+      'Content-Type': contentType,
       'X-Photo-Date': record.date
     };
     if (record.width) headers['X-Photo-Width'] = String(record.width);
     if (record.height) headers['X-Photo-Height'] = String(record.height);
 
-    const response = await this.api(`/api/photos/${encodeURIComponent(id)}`, {
-      method: 'PUT',
-      headers,
-      body: record.blob
-    });
-    const { photo } = await response.json();
-    await this.putRecord({
-      ...record,
-      id: photo.id,
-      date: photo.date,
-      updatedAt: photo.updatedAt,
-      filename: photo.key.split('/').pop(),
-      pending: false
-    });
-    return photo;
+    try {
+      const response = await this.api(`/api/photos/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers,
+        body: record.blob
+      });
+      const { photo } = await response.json();
+      await this.putRecord({
+        ...record,
+        id: photo.id,
+        date: photo.date,
+        updatedAt: photo.updatedAt,
+        filename: photo.key.split('/').pop(),
+        pending: false
+      });
+      return photo;
+    } catch (e) {
+      if (e instanceof ServerNotFoundError) {
+        await this.putRecord({
+          ...record,
+          id,
+          pending: false
+        });
+        return {
+          id,
+          key,
+          date: record.date,
+          mimeType: contentType,
+          width: record.width || null,
+          height: record.height || null,
+          size: record.blob.size,
+          updatedAt: record.updatedAt || new Date().toISOString()
+        };
+      }
+      throw e;
+    }
   },
 
   async downloadPhoto(meta) {
-    const response = await this.api(`/api/photos/${encodeURIComponent(meta.id)}`);
-    const blob = await response.blob();
+    let blob = null;
+    const r2Url = await this.getR2Url();
+
+    if (r2Url && meta.key) {
+      try {
+        const res = await fetch(`${r2Url}/${meta.key}`);
+        if (res.ok) blob = await res.blob();
+      } catch (e) {
+        console.warn('Direct R2 photo download warning:', e);
+      }
+    }
+
+    if (!blob) {
+      try {
+        const response = await this.api(`/api/photos/${encodeURIComponent(meta.id)}`);
+        blob = await response.blob();
+      } catch (e) {
+        if (e instanceof ServerNotFoundError) return;
+        throw e;
+      }
+    }
+
+    if (!blob) return;
+
     let { width, height } = meta;
     if (!width || !height) {
       const dims = await this.compressImage(blob);
@@ -250,7 +351,7 @@ const Storage = {
       width,
       height,
       aspectRatio: width && height ? width / height : 1,
-      filename: meta.key.split('/').pop(),
+      filename: meta.key ? meta.key.split('/').pop() : `${meta.id}.jpg`,
       mimeType: meta.mimeType || blob.type,
       updatedAt: meta.updatedAt,
       pending: false
@@ -395,3 +496,4 @@ const Storage = {
 
 window.Storage = Storage;
 window.LockedError = LockedError;
+window.ServerNotFoundError = ServerNotFoundError;

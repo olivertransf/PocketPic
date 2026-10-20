@@ -165,9 +165,9 @@ const App = {
         statusEl.textContent = 'Locked.';
         break;
       default:
-        statusEl.textContent = Storage.lastSyncedAt
+        statusEl.textContent = Storage.syncMessage || (Storage.lastSyncedAt
           ? `Last synced ${Storage.lastSyncedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
-          : 'Not synced yet.';
+          : 'Local storage (ready).');
     }
   },
 
@@ -285,6 +285,18 @@ const App = {
       qualitySelect.value = await Storage.getSetting('compressionQuality', 0.85);
       qualitySelect.addEventListener('change', async (e) => {
         await Storage.setSetting('compressionQuality', parseFloat(e.target.value));
+      });
+    }
+
+    const r2UrlInput = document.getElementById('settings-r2-url-input');
+    const saveR2UrlBtn = document.getElementById('settings-save-r2-url');
+    if (r2UrlInput && saveR2UrlBtn) {
+      Storage.getR2Url().then((url) => { r2UrlInput.value = url; });
+      saveR2UrlBtn.addEventListener('click', async () => {
+        const val = r2UrlInput.value.trim();
+        await Storage.setSetting('r2Url', val || null);
+        alert('Cloudflare R2 Bucket URL updated.');
+        Storage.sync().catch(() => {});
       });
     }
 

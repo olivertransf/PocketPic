@@ -136,7 +136,7 @@
         </div>
 
         <div class="list-section">
-          <div class="list-header">Sync</div>
+          <div class="list-header">Sync & Storage</div>
           <div class="list-group">
             <div class="list-row">
               <div class="row-stack">
@@ -145,8 +145,12 @@
               </div>
               <button class="btn btn-plain" id="settings-sync-now">Sync Now</button>
             </div>
+            <div class="list-row">
+              <input type="url" class="row-input" id="settings-r2-url-input" placeholder="Cloudflare R2 Bucket URL" aria-label="Cloudflare R2 Bucket URL">
+              <button class="btn btn-plain" id="settings-save-r2-url">Save URL</button>
+            </div>
           </div>
-          <div class="list-footer">Photos are stored in your private Cloudflare R2 bucket and sync to every device you unlock.</div>
+          <div class="list-footer">Photos store directly in Cloudflare R2 or local IndexedDB without external server dependency.</div>
         </div>
 
         <div class="list-section">
