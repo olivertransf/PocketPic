@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="PocketPic Web App — One photo a day photo journal with alignment overlays and eye alignment time-lapse export.">
-  <meta name="theme-color" content="#0a0c10">
-  <title>PocketPic — Daily Photo Journal Web</title>
+  <meta name="description" content="PocketPic Web — Daily photo journal with ghost alignment overlay, Cloudflare R2 storage, and time-lapse video export.">
+  <meta name="theme-color" content="#0d0d0f">
+  <title>PocketPic — Daily Photo Journal</title>
   <link rel="icon" href="images/favicon.png" type="image/png">
   <link rel="apple-touch-icon" href="images/app-icon.png">
   <link rel="stylesheet" href="css/app.css">
@@ -23,21 +23,26 @@
       <!-- Navigation Tabs -->
       <nav class="nav-tabs" aria-label="Main Navigation">
         <button class="nav-btn active" data-tab="library">
-          <span>🖼️</span> Library
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M20.4 14.5L16 10l-6 6-3-3L3.6 16.5"/></svg>
+          Library
         </button>
         <button class="nav-btn" data-tab="camera">
-          <span>📷</span> Camera
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Camera
         </button>
         <button class="nav-btn" data-tab="export">
-          <span>🎬</span> Export
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/></svg>
+          Export
         </button>
         <button class="nav-btn" data-tab="settings">
-          <span>⚙️</span> Settings
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          Settings
         </button>
       </nav>
 
-      <button class="lock-btn" id="header-lock-btn" title="Lock Website">
-        🔒 Lock
+      <button class="lock-btn" id="header-lock-btn" title="Lock App">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Lock
       </button>
     </div>
   </header>
@@ -58,24 +63,25 @@
         <div class="viewfinder-wrapper">
           <video id="viewfinder-video" class="viewfinder-video" autoplay playsinline muted></video>
           <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
+          <div id="camera-resolution-badge" class="camera-res-badge" style="display:none;"></div>
         </div>
 
         <div class="opacity-slider-box">
-          <span style="font-size: 0.85rem; color: var(--text-secondary);">Ghost Overlay:</span>
+          <span style="font-size: 0.82rem; color: var(--text-secondary); font-weight: 500;">Ghost Overlay</span>
           <input type="range" id="camera-opacity-range" min="0.1" max="1.0" step="0.05" value="0.4">
           <button class="camera-tool-btn" id="camera-overlay-btn" title="Toggle Ghost Overlay">
-            👁️
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
 
         <div class="camera-controls">
           <button class="camera-tool-btn" id="camera-switch-btn" title="Switch Camera">
-            🔄
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0-4.4-3.6-8-8-8s-8 3.6-8 8h3l-4 4-4-4h3c0-5.5 4.5-10 10-10s10 4.5 10 10h-3z"/><path d="M4 14c0 4.4 3.6 8 8 8s8-3.6 8-8h-3l4-4 4 4h-3c0 5.5-4.5 10-10 10S2 19.5 2 14h3z"/></svg>
           </button>
           <button class="shutter-btn" id="camera-shutter-btn" title="Take Photo">
             <div class="shutter-inner"></div>
           </button>
-          <div style="width: 50px;"></div> <!-- Spacer for symmetry -->
+          <div style="width: 46px;"></div> <!-- Spacer -->
         </div>
       </div>
     </section>
@@ -83,13 +89,13 @@
     <!-- Tab 3: Time-lapse Export -->
     <section id="tab-export" class="tab-pane">
       <div class="export-card">
-        <h2>Export Time-lapse Video</h2>
-        <p style="color: var(--text-secondary); font-size: 0.95rem;">
-          Generate a shareable video montage from your captured photos with optional face eye alignment.
+        <h2 style="font-size: 1.3rem;">Export Time-lapse Video</h2>
+        <p style="color: var(--text-secondary); font-size: 0.88rem;">
+          Generate a time-lapse video montage from your photo series with optional face alignment.
         </p>
 
         <div class="setting-group" style="padding:0; background:transparent; border:none;">
-          <label style="font-weight: 600; font-size: 0.95rem;">Frame Rate (FPS):</label>
+          <label style="font-weight: 500; font-size: 0.9rem;">Frame Rate (FPS)</label>
           <div class="fps-options">
             <button class="fps-btn" data-fps="5">5 FPS</button>
             <button class="fps-btn active" data-fps="10">10 FPS</button>
@@ -102,29 +108,30 @@
         <div class="setting-row">
           <div class="setting-info">
             <label>Align Eyes</label>
-
-            <p>Vision landmarks alignment centers face and eye positions across all photos.</p>
+            <p>Centers eye landmarks across frames for consistent video framing.</p>
           </div>
           <div class="setting-control">
-            <input type="checkbox" id="export-align-eyes-toggle" checked style="width: 20px; height: 20px; accent-color: var(--accent-color);">
+            <input type="checkbox" id="export-align-eyes-toggle" checked style="width: 18px; height: 18px; accent-color: var(--text-primary);">
           </div>
         </div>
 
-        <button class="btn btn-primary" id="start-export-btn" style="width: 100%; padding: 16px;">
-          🎬 Generate Video Montage
+        <button class="btn btn-primary" id="start-export-btn" style="width: 100%; padding: 14px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Generate Video Montage
         </button>
 
         <div id="export-progress-box" class="export-progress-box" style="display: none;">
           <div class="progress-bar">
             <div id="export-progress-fill" class="progress-fill"></div>
           </div>
-          <p id="export-progress-status" style="font-size: 0.85rem; color: var(--text-secondary); text-align: center;">Preparing frames...</p>
+          <p id="export-progress-status" style="font-size: 0.82rem; color: var(--text-secondary); text-align: center;">Preparing frames...</p>
         </div>
 
-        <div id="export-result-box" style="display: none; text-align: center; margin-top: 16px;">
-          <video id="export-video-preview" controls style="width: 100%; max-height: 320px; border-radius: var(--radius-md); background:#000; margin-bottom: 16px;"></video>
+        <div id="export-result-box" style="display: none; text-align: center; margin-top: 14px;">
+          <video id="export-video-preview" controls style="width: 100%; max-height: 320px; border-radius: var(--radius-md); background:#000; margin-bottom: 14px;"></video>
           <a id="export-download-btn" class="btn btn-primary" style="width: 100%; text-decoration: none;">
-            ⬇️ Download Time-lapse Video
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download Video Montage
           </a>
         </div>
       </div>
@@ -139,21 +146,21 @@
           <div class="setting-row">
             <div class="setting-info">
               <label>Private Passphrase</label>
-              <p>Lock the web application with a custom unlock passphrase.</p>
+              <p>Lock access to your photo library and camera with a passphrase.</p>
             </div>
           </div>
           <div style="display: flex; gap: 10px; margin-top: 10px;">
-            <input type="password" id="settings-passphrase-input" placeholder="New Passphrase..." style="flex:1;">
+            <input type="password" id="settings-passphrase-input" placeholder="Set or update passphrase..." style="flex:1;">
             <button class="btn btn-primary" id="settings-save-passphrase">Save</button>
           </div>
         </div>
 
         <!-- Camera Overlay Settings -->
         <div class="settings-group">
-          <div class="group-title">Camera & Overlay</div>
+          <div class="group-title">Camera & Compression</div>
           <div class="setting-row">
             <div class="setting-info">
-              <label>Default Ghost Opacity</label>
+              <label>Default Overlay Opacity</label>
               <p>Default transparency level for the previous shot alignment overlay.</p>
             </div>
             <div class="setting-control">
@@ -164,32 +171,62 @@
           <div class="setting-row">
             <div class="setting-info">
               <label>Image Compression Quality</label>
-              <p>Canvas WebP/JPEG compression quality factor.</p>
+              <p>WebP/JPEG quality factor for stored photos.</p>
             </div>
             <div class="setting-control">
               <select id="settings-quality-select">
                 <option value="0.7">Low (0.70)</option>
-                <option value="0.85" selected>Optimized (0.85)</option>
-                <option value="0.95">High (0.95)</option>
+                <option value="0.85" selected>Optimized WebP (0.85)</option>
+                <option value="0.95">High Native (0.95)</option>
               </select>
             </div>
           </div>
         </div>
 
-        <!-- Optional Cloudflare R2 Sync -->
+        <!-- Cloudflare R2 Sync -->
         <div class="settings-group">
-          <div class="group-title">Cloudflare R2 Bucket Sync</div>
-          <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 12px;">
-            Optionally backup compressed photos to your Cloudflare R2 storage bucket.
+          <div class="group-title">Cloudflare R2 Bucket Connection</div>
+          <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px;">
+            Configure your Cloudflare R2 storage credentials to backup photos.
           </p>
           <div style="display: flex; flex-direction: column; gap: 10px;">
-            <input type="text" id="settings-r2-endpoint" placeholder="R2 Endpoint (https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com)">
-            <input type="text" id="settings-r2-bucket" placeholder="Bucket Name (e.g. pocket-pic)" value="pocket-pic">
-            <input type="text" id="settings-r2-access-key" placeholder="Access Key ID">
-            <input type="password" id="settings-r2-secret-key" placeholder="Secret Access Key">
-            <button class="btn btn-secondary" id="settings-save-r2" style="align-self: flex-end; margin-top: 6px;">
+            <input type="text" id="settings-r2-endpoint" placeholder="Endpoint URL" value="https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com">
+            <input type="text" id="settings-r2-bucket" placeholder="Bucket Name" value="pocketpic">
+            <input type="text" id="settings-r2-access-key" placeholder="R2 Access Key ID">
+            <input type="password" id="settings-r2-secret-key" placeholder="R2 Secret Access Key">
+            <button class="btn btn-secondary" id="settings-save-r2" style="align-self: flex-end; margin-top: 4px;">
               Save R2 Credentials
             </button>
+          </div>
+
+          <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+            <div style="font-weight: 600; font-size: 0.88rem; margin-bottom: 6px;">Cloudflare R2 CORS Policy Setup</div>
+            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 10px;">
+              If browser requests are blocked by CORS policy, copy and paste this CORS policy JSON in your <strong>Cloudflare R2 Dashboard &rarr; pocketpic bucket &rarr; Settings &rarr; CORS Policy</strong>:
+            </p>
+            <pre style="background: var(--bg-surface); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); font-size: 0.75rem; color: var(--text-primary); overflow-x: auto; font-family: monospace;">[
+  {
+    "AllowedOrigins": [
+      "https://pocket-pic.olivertran.me",
+      "http://localhost:8080",
+      "*"
+    ],
+    "AllowedMethods": [
+      "GET",
+      "PUT",
+      "POST",
+      "DELETE",
+      "HEAD"
+    ],
+    "AllowedHeaders": [
+      "*"
+    ],
+    "ExposeHeaders": [
+      "ETag"
+    ],
+    "MaxAgeSeconds": 3600
+  }
+]</pre>
           </div>
         </div>
       </div>
@@ -198,15 +235,21 @@
   </main>
 
   <!-- Passphrase Security Lock Overlay Modal -->
-  <div class="modal-overlay" id="passphrase-lock-overlay">
+  <div class="modal-overlay active" id="passphrase-lock-overlay">
     <div class="modal-content">
       <div class="lock-screen-box">
-        <div class="lock-icon">🔒</div>
-        <h2>Private PocketPic</h2>
-        <p style="color: var(--text-secondary); font-size: 0.95rem;">Enter your passphrase to unlock your journal and camera.</p>
+        <div class="lock-icon-wrapper">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        </div>
+        <div>
+          <h2 style="font-size: 1.25rem;">Private PocketPic</h2>
+          <p id="unlock-passphrase-desc" style="color: var(--text-secondary); font-size: 0.88rem; margin-top: 4px;">Enter your passphrase to access your journal.</p>
+        </div>
         <input type="password" id="unlock-passphrase-input" class="passphrase-input" placeholder="Passphrase..." autofocus>
-        <div id="unlock-passphrase-error" style="color: var(--danger-color); font-size: 0.85rem; display: none;"></div>
-        <button class="btn btn-primary" id="unlock-passphrase-btn" style="padding: 14px;">Unlock App</button>
+        <div id="unlock-passphrase-error" style="color: var(--danger-color); font-size: 0.82rem; display: none;"></div>
+        <button class="btn btn-primary" id="unlock-passphrase-btn" style="width: 100%; padding: 12px;">
+          Unlock Journal
+        </button>
       </div>
     </div>
   </div>

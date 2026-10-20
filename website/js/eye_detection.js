@@ -72,53 +72,10 @@ const EyeDetection = {
   },
 
   async detectEyesFallback(img, width, height) {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const imgData = ctx.getImageData(0, 0, width, height);
-    const pixels = imgData.data;
-
-    // Scan upper-middle region of photo (typical selfie framing)
-    const startY = Math.floor(height * 0.15);
-    const endY = Math.floor(height * 0.55);
-    const startX = Math.floor(width * 0.15);
-    const endX = Math.floor(width * 0.85);
-
-    let minLuminanceLeft = 255;
-    let minLuminanceRight = 255;
-    let leftEye = { x: Math.floor(width * 0.35), y: Math.floor(height * 0.35) };
-    let rightEye = { x: Math.floor(width * 0.65), y: Math.floor(height * 0.35) };
-
-    const midX = Math.floor(width / 2);
-
-    for (let y = startY; y < endY; y += 4) {
-      for (let x = startX; x < endX; x += 4) {
-        const idx = (y * width + x) * 4;
-        const r = pixels[idx];
-        const g = pixels[idx + 1];
-        const b = pixels[idx + 2];
-        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-
-        if (x < midX) {
-          if (luminance < minLuminanceLeft) {
-            minLuminanceLeft = luminance;
-            leftEye = { x, y };
-          }
-        } else {
-          if (luminance < minLuminanceRight) {
-            minLuminanceRight = luminance;
-            rightEye = { x, y };
-          }
-        }
-      }
-    }
-
+    // Clean facial proportion fallback without erratic pixel scanning
     return {
-      leftEye,
-      rightEye,
+      leftEye: { x: width * 0.35, y: height * 0.38 },
+      rightEye: { x: width * 0.65, y: height * 0.38 },
       imageSize: { width, height }
     };
   },

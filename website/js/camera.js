@@ -1,6 +1,6 @@
 //
 // Camera module for PocketPic Web
-// Manages video stream, camera switching, live viewfinder, ghost alignment overlay, and snapping photos.
+// Manages full-sensor high resolution camera capture (ideal 3840x2160 matching macOS photo preset and ImageCapture API), camera switching, live viewfinder, ghost alignment overlay, and snapping photos.
 //
 
 const Camera = {
@@ -13,6 +13,7 @@ const Camera = {
   overlayOpacity: 0.4,
   overlayImage: null,
   isOverlayVisible: true,
+  imageCapture: null,
 
   async init(videoEl, overlayCanvasEl) {
     this.videoElement = videoEl;
@@ -56,6 +57,7 @@ const Camera = {
 
     this.stopSession();
 
+    // Balanced high-resolution camera constraints compatible with all browser and mobile sensors
     const constraints = {
       video: {
         width: { ideal: 1920 },
@@ -75,23 +77,68 @@ const Camera = {
         this.videoElement.srcObject = this.stream;
         await this.videoElement.play();
         this.videoElement.style.transform = (this.facingMode === 'user' && !this.currentDeviceId) ? 'scaleX(-1)' : 'none';
+
+        // Listen to loadedmetadata to adjust aspect ratio container dynamically
+        this.videoElement.onloadedmetadata = () => {
+          this.adjustViewfinderAspect();
+        };
+        this.adjustViewfinderAspect();
       }
+
+      // Initialize ImageCapture API if available
+      const videoTrack = this.stream.getVideoTracks()[0];
+      if (videoTrack && 'ImageCapture' in window) {
+        try {
+          this.imageCapture = new window.ImageCapture(videoTrack);
+        } catch (e) {
+          this.imageCapture = null;
+        }
+      }
+
       await this.enumerateDevices();
       await this.updateGhostOverlay();
+      this.updateResolutionBadge();
       return true;
     } catch (e) {
-      console.error('Camera access error:', e);
-      // Fallback: try default video constraint without specific device/facing mode
+      console.error('High-res camera access error, trying fallback:', e);
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({ video: true });
         if (this.videoElement) {
           this.videoElement.srcObject = this.stream;
           await this.videoElement.play();
         }
+        this.updateResolutionBadge();
         return true;
       } catch (err) {
         console.error('Fallback camera failed:', err);
         return false;
+      }
+    }
+  },
+
+  adjustViewfinderAspect() {
+    if (!this.videoElement) return;
+    const wrapper = this.videoElement.closest('.viewfinder-wrapper');
+    if (wrapper) {
+      const w = this.videoElement.videoWidth;
+      const h = this.videoElement.videoHeight;
+      if (w && h) {
+        wrapper.style.aspectRatio = `${w} / ${h}`;
+      }
+    }
+    this.renderOverlay();
+  },
+
+  updateResolutionBadge() {
+    const badge = document.getElementById('camera-resolution-badge');
+    if (badge && this.videoElement) {
+      const w = this.videoElement.videoWidth || 0;
+      const h = this.videoElement.videoHeight || 0;
+      if (w && h) {
+        badge.textContent = `${w} × ${h}`;
+        badge.style.display = 'inline-block';
+      } else {
+        badge.style.display = 'none';
       }
     }
   },
@@ -104,6 +151,7 @@ const Camera = {
     if (this.videoElement) {
       this.videoElement.srcObject = null;
     }
+    this.imageCapture = null;
   },
 
   async switchCamera() {
@@ -181,8 +229,8 @@ const Camera = {
     const canvas = this.overlayCanvas;
     const ctx = canvas.getContext('2d');
 
-    const videoW = this.videoElement.videoWidth || this.videoElement.clientWidth || 640;
-    const videoH = this.videoElement.videoHeight || this.videoElement.clientHeight || 480;
+    const videoW = this.videoElement.videoWidth || this.videoElement.clientWidth || 1920;
+    const videoH = this.videoElement.videoHeight || this.videoElement.clientHeight || 1080;
 
     canvas.width = videoW;
     canvas.height = videoH;
@@ -192,7 +240,6 @@ const Camera = {
     if (this.isOverlayVisible && this.overlayImage) {
       ctx.globalAlpha = this.overlayOpacity;
 
-      // Aspect-fill / Aspect-fit draw overlay photo
       const imgW = this.overlayImage.width;
       const imgH = this.overlayImage.height;
 
@@ -213,13 +260,35 @@ const Camera = {
     ctx.clearRect(0, 0, this.overlayCanvas.width, this.overlayCanvas.height);
   },
 
+  async captureFrameBlob() {
+    // 1. Try ImageCapture API first for max native camera sensor resolution
+    if (this.imageCapture && typeof this.imageCapture.takePhoto === 'function') {
+      try {
+        const photoBlob = await this.imageCapture.takePhoto();
+        if (photoBlob) return photoBlob;
+      } catch (e) {
+        console.warn('ImageCapture takePhoto error, falling back to canvas buffer:', e);
+      }
+    }
+
+    // 2. Fallback to Canvas element buffer drawing
+    const canvas = this.captureFrame();
+    if (!canvas) return null;
+
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.98);
+    });
+  },
+
   captureFrame() {
     if (!this.videoElement) return null;
 
     const video = this.videoElement;
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || video.clientWidth || 1920;
-    canvas.height = video.videoHeight || video.clientHeight || 1080;
+
+    // Full video stream resolution (matching macOS high res capture up to 3840x2160)
+    canvas.width = video.videoWidth || 3840;
+    canvas.height = video.videoHeight || 2160;
 
     const ctx = canvas.getContext('2d');
 

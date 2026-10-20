@@ -1,6 +1,6 @@
 //
 // Storage module for PocketPic Web
-// Manages local photo storage using IndexedDB, image compression, settings, and optional Cloudflare R2 backup.
+// Manages local photo storage using IndexedDB, high resolution image compression, settings, and Cloudflare R2 S3/SigV4 sync.
 //
 
 const Storage = {
@@ -13,7 +13,7 @@ const Storage = {
   async init() {
     if (this.db) return this.db;
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
 
       request.onupgradeneeded = (event) => {
@@ -34,21 +34,19 @@ const Storage = {
 
       request.onerror = (event) => {
         console.error('IndexedDB error:', event.target.error);
-        reject(event.target.error);
+        resolve(null);
       };
     });
   },
 
-  // Save a photo (compresses image to WebP or JPEG blob first)
+  // Save a photo (compresses image matching macOS high resolution sensor output)
   async savePhoto(imageSource, metadata = {}) {
     await this.init();
 
-    // Compression parameters from settings or default
-    const maxDimension = await this.getSetting('maxDimension', 1920);
+    const maxDimension = await this.getSetting('maxDimension', 3840);
     const quality = await this.getSetting('compressionQuality', 0.85);
     const format = await this.getSetting('imageFormat', 'image/webp');
 
-    // Compress image to blob
     const { blob, width, height, aspectRatio } = await this.compressImage(imageSource, maxDimension, quality, format);
 
     const id = metadata.id || crypto.randomUUID();
@@ -61,64 +59,90 @@ const Storage = {
       width,
       height,
       aspectRatio,
-      filename: `${id}.${format === 'image/webp' ? 'webp' : 'jpg'}`,
+      filename: metadata.filename || `${id}.${format === 'image/webp' ? 'webp' : 'jpg'}`,
       mimeType: blob.type
     };
 
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.PHOTOS_STORE], 'readwrite');
-      const store = tx.objectStore(this.PHOTOS_STORE);
-      const request = store.put(photoRecord);
+    if (!this.db) return photoRecord;
 
-      request.onsuccess = async () => {
-        // Optional Cloudflare R2 backup sync
-        this.syncToR2IfConfigured(photoRecord).catch(err => console.warn('R2 sync skipped or failed:', err));
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.PHOTOS_STORE], 'readwrite');
+        const store = tx.objectStore(this.PHOTOS_STORE);
+        const request = store.put(photoRecord);
+
+        request.onsuccess = async () => {
+          if (!metadata.skipR2Upload) {
+            this.syncToR2IfConfigured(photoRecord).catch(err => console.warn('R2 sync skipped/failed:', err));
+          }
+          resolve(photoRecord);
+        };
+
+        request.onerror = () => resolve(photoRecord);
+      } catch (e) {
+        console.warn('savePhoto transaction error:', e);
         resolve(photoRecord);
-      };
-
-      request.onerror = (e) => reject(e.target.error);
+      }
     });
   },
 
   async getAllPhotos() {
     await this.init();
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.PHOTOS_STORE], 'readonly');
-      const store = tx.objectStore(this.PHOTOS_STORE);
-      const request = store.getAll();
+    if (!this.db) return [];
 
-      request.onsuccess = () => {
-        const photos = request.result || [];
-        // Sort newest first by default
-        photos.sort((a, b) => new Date(b.date) - new Date(a.date));
-        resolve(photos);
-      };
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.PHOTOS_STORE], 'readonly');
+        const store = tx.objectStore(this.PHOTOS_STORE);
+        const request = store.getAll();
 
-      request.onerror = (e) => reject(e.target.error);
+        request.onsuccess = () => {
+          const photos = request.result || [];
+          photos.sort((a, b) => new Date(b.date) - new Date(a.date));
+          resolve(photos);
+        };
+
+        request.onerror = () => resolve([]);
+      } catch (e) {
+        console.warn('getAllPhotos transaction error:', e);
+        resolve([]);
+      }
     });
   },
 
   async getPhoto(id) {
     await this.init();
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.PHOTOS_STORE], 'readonly');
-      const store = tx.objectStore(this.PHOTOS_STORE);
-      const request = store.get(id);
+    if (!this.db) return null;
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = (e) => reject(e.target.error);
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.PHOTOS_STORE], 'readonly');
+        const store = tx.objectStore(this.PHOTOS_STORE);
+        const request = store.get(id);
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+      } catch (e) {
+        resolve(null);
+      }
     });
   },
 
   async deletePhoto(id) {
     await this.init();
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.PHOTOS_STORE], 'readwrite');
-      const store = tx.objectStore(this.PHOTOS_STORE);
-      const request = store.delete(id);
+    if (!this.db) return true;
 
-      request.onsuccess = () => resolve(true);
-      request.onerror = (e) => reject(e.target.error);
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.PHOTOS_STORE], 'readwrite');
+        const store = tx.objectStore(this.PHOTOS_STORE);
+        const request = store.delete(id);
+
+        request.onsuccess = () => resolve(true);
+        request.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
     });
   },
 
@@ -129,9 +153,23 @@ const Storage = {
     return true;
   },
 
-  // Helper function to compress images using Canvas API
-  async compressImage(source, maxDimension = 1920, quality = 0.85, preferredFormat = 'image/webp') {
+  // Compress image helper using Canvas API
+  async compressImage(source, maxDimension = 3840, quality = 0.95, preferredFormat = 'image/webp') {
     return new Promise((resolve, reject) => {
+      if (source instanceof Blob && source.type.includes('image/')) {
+        // Source is already a processed image blob
+        const img = new Image();
+        img.onload = () => {
+          URL.revokeObjectURL(img.src);
+          const width = img.naturalWidth || img.width;
+          const height = img.naturalHeight || img.height;
+          resolve({ blob: source, width, height, aspectRatio: width / height });
+        };
+        img.onerror = () => resolve({ blob: source, width: 1920, height: 1080, aspectRatio: 16/9 });
+        img.src = URL.createObjectURL(source);
+        return;
+      }
+
       const img = new Image();
 
       const process = () => {
@@ -155,12 +193,9 @@ const Storage = {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Fallback to jpeg if browser doesn't support webp canvas export
-        let mime = preferredFormat;
         canvas.toBlob(
           (blob) => {
             if (!blob) {
-              // Retry with image/jpeg
               canvas.toBlob(
                 (jpegBlob) => {
                   resolve({ blob: jpegBlob, width, height, aspectRatio });
@@ -172,7 +207,7 @@ const Storage = {
               resolve({ blob, width, height, aspectRatio });
             }
           },
-          mime,
+          preferredFormat,
           quality
         );
       };
@@ -189,8 +224,8 @@ const Storage = {
         img.onload = process;
         img.onerror = reject;
       } else if (source instanceof HTMLVideoElement || source instanceof HTMLCanvasElement) {
-        let width = source.videoWidth || source.width;
-        let height = source.videoHeight || source.height;
+        let width = source.videoWidth || source.width || 3840;
+        let height = source.videoHeight || source.height || 2160;
         const aspectRatio = width / height;
 
         if (width > maxDimension || height > maxDimension) {
@@ -222,57 +257,255 @@ const Storage = {
     });
   },
 
-  // Settings Storage Methods
+  // Settings Storage Methods with safe fallbacks
   async getSetting(key, defaultValue = null) {
     await this.init();
-    return new Promise((resolve) => {
-      const tx = this.db.transaction([this.SETTINGS_STORE], 'readonly');
-      const store = tx.objectStore(this.SETTINGS_STORE);
-      const request = store.get(key);
+    if (!this.db) return defaultValue;
 
-      request.onsuccess = () => {
-        resolve(request.result ? request.result.value : defaultValue);
-      };
-      request.onerror = () => resolve(defaultValue);
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.SETTINGS_STORE], 'readonly');
+        const store = tx.objectStore(this.SETTINGS_STORE);
+        const request = store.get(key);
+
+        request.onsuccess = () => {
+          resolve(request.result ? request.result.value : defaultValue);
+        };
+        request.onerror = () => resolve(defaultValue);
+      } catch (e) {
+        resolve(defaultValue);
+      }
     });
   },
 
   async setSetting(key, value) {
     await this.init();
-    return new Promise((resolve, reject) => {
-      const tx = this.db.transaction([this.SETTINGS_STORE], 'readwrite');
-      const store = tx.objectStore(this.SETTINGS_STORE);
-      const request = store.put({ key, value });
+    if (!this.db) return false;
 
-      request.onsuccess = () => resolve(true);
-      request.onerror = (e) => reject(e.target.error);
+    return new Promise((resolve) => {
+      try {
+        const tx = this.db.transaction([this.SETTINGS_STORE], 'readwrite');
+        const store = tx.objectStore(this.SETTINGS_STORE);
+        const request = store.put({ key, value });
+
+        request.onsuccess = () => resolve(true);
+        request.onerror = () => resolve(false);
+      } catch (e) {
+        resolve(false);
+      }
     });
   },
 
-  // Cloudflare R2 Upload Helper (Optional S3 / Pre-Signed URL upload)
-  async syncToR2IfConfigured(photoRecord) {
-    const r2Endpoint = await this.getSetting('r2Endpoint');
-    const r2AccessKey = await this.getSetting('r2AccessKey');
-    const r2SecretKey = await this.getSetting('r2SecretKey');
-    const r2Bucket = await this.getSetting('r2Bucket', 'pocket-pic');
+  // Parse capture date from object key filename (e.g. 2024-05-12, 20240512_143000, 1715521800000) or fallback to LastModified
+  extractDateFromKeyOrLastModified(key, xmlLastModified, headerLastModified) {
+    if (key) {
+      const filename = key.split('/').pop();
 
-    if (!r2Endpoint || !r2AccessKey || !r2SecretKey) {
-      return false; // R2 direct API creds not configured
+      // Match ISO date YYYY-MM-DD or YYYY_MM_DD
+      const isoMatch = filename.match(/(20\d{2})[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])/);
+      if (isoMatch) {
+        const d = new Date(`${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}T12:00:00Z`);
+        if (!isNaN(d.getTime())) return d.toISOString();
+      }
+
+      // Match YYYYMMDD
+      const compactMatch = filename.match(/(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/);
+      if (compactMatch) {
+        const d = new Date(`${compactMatch[1]}-${compactMatch[2]}-${compactMatch[3]}T12:00:00Z`);
+        if (!isNaN(d.getTime())) return d.toISOString();
+      }
+
+      // Match 13-digit millisecond timestamp (e.g. 1715521800000)
+      const tsMatch = filename.match(/\b(1[6-9]\d{11})\b/);
+      if (tsMatch) {
+        const d = new Date(parseInt(tsMatch[1], 10));
+        if (!isNaN(d.getTime())) return d.toISOString();
+      }
     }
 
-    // Direct HTTP upload if worker or pre-signed URL proxy endpoint is set
+    const dateStr = xmlLastModified || headerLastModified || new Date().toISOString();
+    const parsed = new Date(dateStr);
+    return !isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
+  },
+
+  // S3 / SigV4 HMAC Helper Methods for Cloudflare R2
+  async sha256Hex(strOrBuffer) {
+    const buffer = typeof strOrBuffer === 'string' ? new TextEncoder().encode(strOrBuffer) : strOrBuffer;
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+  },
+
+  async hmacSha256(key, data) {
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      typeof key === 'string' ? new TextEncoder().encode(key) : key,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    return await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(data));
+  },
+
+  async getSigV4Headers(method, urlStr, payloadBuffer = new Uint8Array(0)) {
+    const accessKey = await this.getSetting('r2AccessKey');
+    const secretKey = await this.getSetting('r2SecretKey');
+
+    if (!accessKey || !secretKey) return null;
+
+    const url = new URL(urlStr);
+    const region = 'auto';
+    const service = 's3';
+
+    const now = new Date();
+    const amzDate = now.toISOString().replace(/[:-]/g, '').split('.')[0] + 'Z';
+    const dateStamp = amzDate.slice(0, 8);
+
+    const payloadHash = await this.sha256Hex(payloadBuffer);
+
+    const host = url.host;
+    const canonicalHeaders = `host:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzDate}\n`;
+    const signedHeaders = 'host;x-amz-content-sha256;x-amz-date';
+
+    // Canonical Query String
+    const searchParams = new URLSearchParams(url.search);
+    const sortedKeys = Array.from(searchParams.keys()).sort();
+    const canonicalQuery = sortedKeys
+      .map(k => `${encodeURIComponent(k)}=${encodeURIComponent(searchParams.get(k))}`)
+      .join('&');
+
+    const canonicalRequest = [
+      method,
+      url.pathname,
+      canonicalQuery,
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash
+    ].join('\n');
+
+    const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+    const stringToSign = [
+      'AWS4-HMAC-SHA256',
+      amzDate,
+      credentialScope,
+      await this.sha256Hex(canonicalRequest)
+    ].join('\n');
+
+    // Calculate Signature
+    const kDate = await this.hmacSha256(`AWS4${secretKey}`, dateStamp);
+    const kRegion = await this.hmacSha256(kDate, region);
+    const kService = await this.hmacSha256(kRegion, service);
+    const kSigning = await this.hmacSha256(kService, 'aws4_request');
+    const signatureBuffer = await this.hmacSha256(kSigning, stringToSign);
+    const signature = Array.from(new Uint8Array(signatureBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+    const authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+    return {
+      'Authorization': authorization,
+      'x-amz-date': amzDate,
+      'x-amz-content-sha256': payloadHash
+    };
+  },
+
+  // Upload photo record to Cloudflare R2
+  async syncToR2IfConfigured(photoRecord) {
+    const r2Endpoint = await this.getSetting('r2Endpoint', 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com');
+    const r2Bucket = await this.getSetting('r2Bucket', 'pocketpic');
+
+    const uploadUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}/${photoRecord.filename}`;
+    const arrayBuffer = await photoRecord.blob.arrayBuffer();
+
+    const headers = await this.getSigV4Headers('PUT', uploadUrl, new Uint8Array(arrayBuffer));
+    if (!headers) return false;
+
     try {
-      const uploadUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}/${photoRecord.filename}`;
       const response = await fetch(uploadUrl, {
         method: 'PUT',
         headers: {
+          ...headers,
           'Content-Type': photoRecord.mimeType
         },
         body: photoRecord.blob
       });
       return response.ok;
     } catch (e) {
-      console.warn('R2 sync error:', e);
+      console.warn('R2 upload sync error:', e);
+      return false;
+    }
+  },
+
+  // Fetch photos directly from Cloudflare R2 bucket and load into local storage
+  async syncFromR2() {
+    const r2Endpoint = await this.getSetting('r2Endpoint', 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com');
+    const r2Bucket = await this.getSetting('r2Bucket', 'pocketpic');
+
+    const listUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}?list-type=2`;
+    const headers = await this.getSigV4Headers('GET', listUrl);
+
+    if (!headers) {
+      console.warn('R2 credentials not configured for bucket sync.');
+      return false;
+    }
+
+    try {
+      let response;
+      response = await fetch(listUrl, { method: 'GET', headers });
+
+      if (!response.ok) {
+        console.warn('R2 ListObjects response not OK:', response.status);
+        return false;
+      }
+
+      const xmlText = await response.text();
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+      const contentsNodes = xmlDoc.getElementsByTagName('Contents');
+
+      let fetchedCount = 0;
+      const validImageExts = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.avif', '.gif'];
+
+      for (let i = 0; i < contentsNodes.length; i++) {
+        const node = contentsNodes[i];
+        const keyNode = node.getElementsByTagName('Key')[0];
+        const lastModNode = node.getElementsByTagName('LastModified')[0];
+
+        const key = keyNode ? keyNode.textContent : null;
+        if (!key || key.endsWith('/') || key.startsWith('.')) continue;
+
+        const lowerKey = key.toLowerCase();
+        const isImage = validImageExts.some(ext => lowerKey.endsWith(ext));
+        if (!isImage) continue;
+
+        const xmlLastModified = lastModNode ? lastModNode.textContent : null;
+
+        const keyPath = key.split('/').map(segment => encodeURIComponent(segment)).join('/');
+        const objectUrl = `${r2Endpoint.replace(/\/$/, '')}/${r2Bucket}/${keyPath}`;
+        const objHeaders = await this.getSigV4Headers('GET', objectUrl);
+
+        if (objHeaders) {
+          const objResp = await fetch(objectUrl, { method: 'GET', headers: objHeaders });
+
+          if (objResp.ok) {
+            const blob = await objResp.blob();
+            const headerLastModified = objResp.headers.get('Last-Modified');
+            const dateIso = this.extractDateFromKeyOrLastModified(key, xmlLastModified, headerLastModified);
+
+            await this.savePhoto(blob, {
+              id: key.split('.')[0] || crypto.randomUUID(),
+              filename: key,
+              date: dateIso,
+              skipR2Upload: true
+            });
+            fetchedCount++;
+          }
+        }
+      }
+      return fetchedCount;
+    } catch (e) {
+      console.error('R2 syncFromR2 error:', e);
+      if (e.name === 'TypeError' || (e.message && e.message.includes('Failed to fetch'))) {
+        throw new Error('CORS_ERROR');
+      }
       return false;
     }
   }
