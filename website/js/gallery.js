@@ -278,7 +278,7 @@ const Gallery = {
           <button class="icon-btn ${this.isPrivacyMode ? 'active' : ''}" id="gallery-privacy-toggle" title="${this.isPrivacyMode ? 'Show photos' : 'Hide photos'}" aria-label="${this.isPrivacyMode ? 'Show photos' : 'Hide photos'}">
             ${this.isPrivacyMode
               ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A9.7 9.7 0 0 1 12 5c6 0 9.5 7 9.5 7a16.6 16.6 0 0 1-2.6 3.5M6.6 6.6A16.4 16.4 0 0 0 2.5 12s3.5 7 9.5 7a9.4 9.4 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
-              : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7z"/><circle cx="12" cy="12" r="3"/></svg>'}
+              : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>'}
           </button>
           ${count > 0 ? `
             <button class="btn btn-pill ${this.isSelectionMode ? 'active' : ''}" id="gallery-select-toggle">
