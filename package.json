@@ -1,0 +1,19 @@
+{
+  "name": "pocketpic",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p worker"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261019.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.151.2"
+  },
+  "allowScripts": {
+    "workerd@1.20261019.1": true
+  }
+}

@@ -1,0 +1,13 @@
+---
+description: PocketPic web app storage, sync, and passphrase lock
+globs: website/**,worker/**,wrangler.jsonc
+alwaysApply: false
+---
+
+# PocketPic Web on R2
+
+- The web app is `website/` served by the Cloudflare Worker in `worker/src/index.ts` (`wrangler.jsonc`). Netlify static hosting cannot run `/api`, so it will not sync.
+- Photos live in the R2 bucket `pocketpic`, reached only through the Worker's R2 binding. IndexedDB is a per-device cache.
+- Lock is a **passphrase**, not a passkey. Its SHA-256 hash is stored at `auth/passphrase.json` in the bucket so every device shares it. Sessions are an HttpOnly cookie signed with that hash.
+- Never put R2 access keys or the passphrase in the client, settings UI, or git. No browser SigV4, no bucket CORS setup.
+- Index of photos is `index/photos.json`, written with an ETag precondition.

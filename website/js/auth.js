@@ -1,68 +1,48 @@
 //
 // Auth module for PocketPic Web
-// Handles mandatory passphrase setup, unlocking, verification, and session management.
+// The passphrase hash lives in the R2 bucket; the Worker checks it and sets an HttpOnly session cookie.
 //
 
 const Auth = {
-  PASSPHRASE_KEY: 'pocketpic_passphrase_hash',
-  SESSION_UNLOCKED_KEY: 'pocketpic_session_unlocked',
-
-  async hashPassphrase(passphrase) {
-    const msgBuffer = new TextEncoder().encode(passphrase);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  },
-
-  isPassphraseSet() {
-    return !!localStorage.getItem(this.PASSPHRASE_KEY);
-  },
-
-  isUnlocked() {
-    return sessionStorage.getItem(this.SESSION_UNLOCKED_KEY) === 'true';
-  },
-
-  async setPassphrase(passphrase) {
-    if (!passphrase || passphrase.trim().length === 0) {
-      localStorage.removeItem(this.PASSPHRASE_KEY);
-      sessionStorage.removeItem(this.SESSION_UNLOCKED_KEY);
-      return true;
-    }
-    const hash = await this.hashPassphrase(passphrase.trim());
-    localStorage.setItem(this.PASSPHRASE_KEY, hash);
-    sessionStorage.setItem(this.SESSION_UNLOCKED_KEY, 'true');
-    return true;
+  async status() {
+    const response = await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' });
+    if (!response.ok) throw new Error(`Server returned ${response.status}`);
+    return response.json();
   },
 
   async unlock(passphrase) {
-    if (!passphrase || passphrase.trim().length === 0) {
-      return false;
-    }
-
-    const hash = await this.hashPassphrase(passphrase.trim());
-
-    // If no custom passphrase has been set yet, set it on first unlock!
-    if (!this.isPassphraseSet()) {
-      localStorage.setItem(this.PASSPHRASE_KEY, hash);
-      sessionStorage.setItem(this.SESSION_UNLOCKED_KEY, 'true');
-      return true;
-    }
-
-    const storedHash = localStorage.getItem(this.PASSPHRASE_KEY);
-    if (hash === storedHash) {
-      sessionStorage.setItem(this.SESSION_UNLOCKED_KEY, 'true');
-      return true;
-    }
-    return false;
+    return this.postPassphrase('/api/unlock', 'POST', passphrase);
   },
 
-  lock() {
-    sessionStorage.removeItem(this.SESSION_UNLOCKED_KEY);
+  async setPassphrase(passphrase) {
+    return this.postPassphrase('/api/passphrase', 'PUT', passphrase);
   },
 
-  clearPassphrase() {
-    localStorage.removeItem(this.PASSPHRASE_KEY);
-    sessionStorage.removeItem(this.SESSION_UNLOCKED_KEY);
+  async lock() {
+    try {
+      await fetch('/api/lock', { method: 'POST', credentials: 'same-origin' });
+    } catch (e) {
+      console.warn('Lock request failed:', e);
+    }
+  },
+
+  async postPassphrase(path, method, passphrase) {
+    const value = (passphrase || '').trim();
+    if (!value) return { ok: false, error: 'Enter a passphrase.' };
+
+    try {
+      const response = await fetch(path, {
+        method,
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passphrase: value })
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) return { ok: false, error: body.error || `Server returned ${response.status}` };
+      return { ok: true, created: !!body.created };
+    } catch (e) {
+      return { ok: false, error: 'Could not reach PocketPic. Check your connection.' };
+    }
   }
 };
 

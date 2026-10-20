@@ -56,13 +56,13 @@ PocketPic/
 
 ## Website
 
-The `website/` folder is a static site for App Store Connect (marketing, privacy, support). Deploy with Vercel:
+`website/` is PocketPic Web plus the privacy and support pages. A Cloudflare Worker (`worker/src/index.ts`) serves it and handles `/api`, storing photos in the R2 bucket `pocketpic`. One shared passphrase unlocks it; its hash is kept in the bucket.
 
-| Setting | Value |
-|---------|-------|
-| Root Directory | `website` |
-| Build Command | *(empty)* |
-| Output Directory | `.` |
+```bash
+npm install
+npm run dev      # local Worker with a simulated R2 bucket
+npm run deploy   # needs `npx wrangler login` on the account that owns the bucket
+```
 
 ## Tech stack
 

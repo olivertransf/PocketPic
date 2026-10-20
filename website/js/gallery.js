@@ -9,7 +9,7 @@ const Gallery = {
   selectedPhotoIds: new Set(),
   isSelectionMode: false,
   isPrivacyMode: false,
-  isSyncingR2: false,
+  objectUrls: new Map(),
 
   async init(containerEl) {
     this.containerElement = containerEl;
@@ -25,6 +25,7 @@ const Gallery = {
     } else {
       this.photos = [];
     }
+    this.pruneObjectUrls();
     this.render();
   },
 
@@ -104,46 +105,40 @@ const Gallery = {
     return groups;
   },
 
-  async syncR2Bucket() {
-    if (this.isSyncingR2 || !window.Storage) return;
+  syncNow() {
+    if (window.Storage) Storage.sync().catch(() => {});
+  },
 
-    const accessKey = await Storage.getSetting('r2AccessKey');
-    const secretKey = await Storage.getSetting('r2SecretKey');
-    if (!accessKey || !secretKey) {
-      alert('Cloudflare R2 Access Key ID and Secret Access Key are required to sync photos from your private bucket.\n\nPlease go to Settings -> Cloudflare R2 Bucket Connection and enter your R2 Access Key ID and Secret Access Key.');
-      return;
+  photoUrl(photo) {
+    const version = `${photo.updatedAt || 'local'}:${photo.blob.size}`;
+    const cached = this.objectUrls.get(photo.id);
+    if (cached && cached.version === version) return cached.url;
+    if (cached) URL.revokeObjectURL(cached.url);
+    const url = URL.createObjectURL(photo.blob);
+    this.objectUrls.set(photo.id, { version, url });
+    return url;
+  },
+
+  pruneObjectUrls() {
+    const ids = new Set(this.photos.map((photo) => photo.id));
+    for (const [id, cached] of this.objectUrls) {
+      if (!ids.has(id)) {
+        URL.revokeObjectURL(cached.url);
+        this.objectUrls.delete(id);
+      }
     }
+  },
 
-    this.isSyncingR2 = true;
-    this.render();
-
-    try {
-      const result = await Storage.syncFromR2();
-      if (result !== false) {
-        alert(`Successfully synced ${result} photo(s) from your Cloudflare R2 bucket!`);
-        await this.refresh();
-        if (window.Camera) await Camera.updateGhostOverlay();
-      } else {
-        alert('Failed to sync from Cloudflare R2. Please verify your R2 Endpoint, Bucket Name, Access Key, and Secret Key in Settings.');
-      }
-    } catch (e) {
-      console.warn('Sync R2 error:', e);
-      if (e.message === 'CORS_ERROR') {
-        alert(
-          'Cloudflare R2 CORS Error:\n\n' +
-          'Your web browser was blocked from connecting to your R2 bucket by CORS policy.\n\n' +
-          'To fix this in Cloudflare:\n' +
-          '1. Go to Cloudflare Dashboard -> R2 -> "pocketpic" bucket -> Settings.\n' +
-          '2. Find "CORS Policy" and click Edit.\n' +
-          '3. Add a CORS policy allowing your domain (or "*") with methods GET, PUT, HEAD, OPTIONS.\n\n' +
-          'Check the CORS guide in PocketPic Settings for the exact JSON policy snippet!'
-        );
-      } else {
-        alert('R2 Sync Error: ' + e.message);
-      }
-    } finally {
-      this.isSyncingR2 = false;
-      this.render();
+  syncLabel() {
+    switch (Storage.syncState) {
+      case 'syncing':
+        return 'Syncing…';
+      case 'error':
+        return 'Sync failed';
+      case 'locked':
+        return 'Locked';
+      default:
+        return 'Sync';
     }
   },
 
@@ -184,24 +179,37 @@ const Gallery = {
   async deleteSelected() {
     if (this.selectedPhotoIds.size === 0) return;
     if (confirm(`Delete ${this.selectedPhotoIds.size} selected photo(s)?`)) {
-      if (window.Storage) {
+      try {
         await Storage.deletePhotos(Array.from(this.selectedPhotoIds));
+      } catch (e) {
+        if (!(e instanceof LockedError)) alert(`Could not delete: ${e.message}`);
+        return;
       }
       this.selectedPhotoIds.clear();
       this.isSelectionMode = false;
       await this.refresh();
-      if (window.Camera) await Camera.updateGhostOverlay();
     }
   },
 
   async deleteSinglePhoto(id) {
     if (confirm('Are you sure you want to delete this photo?')) {
-      if (window.Storage) {
+      try {
         await Storage.deletePhoto(id);
+      } catch (e) {
+        if (!(e instanceof LockedError)) alert(`Could not delete: ${e.message}`);
+        return;
       }
-      await this.refresh();
-      if (window.Camera) await Camera.updateGhostOverlay();
       this.closeDetailModal();
+    }
+  },
+
+  async replaceSinglePhoto(id, file) {
+    if (!file) return;
+    try {
+      await Storage.replacePhoto(id, file);
+      this.closeDetailModal();
+    } catch (e) {
+      alert(`Could not replace photo: ${e.message}`);
     }
   },
 
@@ -229,9 +237,9 @@ const Gallery = {
         </div>
 
         <div class="gallery-actions">
-          <button class="btn btn-secondary ${this.isSyncingR2 ? 'active' : ''}" id="gallery-r2-sync" title="Sync Cloudflare R2 Bucket">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="${this.isSyncingR2 ? 'spin' : ''}"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-            ${this.isSyncingR2 ? 'Syncing...' : 'Sync R2'}
+          <button class="btn btn-secondary ${Storage.syncState === 'error' ? 'sync-error' : ''}" id="gallery-sync" title="${Storage.syncMessage || 'Sync with your other devices'}">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="${Storage.syncState === 'syncing' ? 'spin' : ''}"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            ${this.syncLabel()}
           </button>
 
           <button class="btn btn-secondary ${this.isPrivacyMode ? 'active' : ''}" id="gallery-privacy-toggle" title="Toggle Privacy Mode">
@@ -262,10 +270,10 @@ const Gallery = {
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
           </div>
           <h3 style="font-size: 1.3rem; font-weight: 600; margin-bottom: 6px;">No Photos Yet</h3>
-          <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 20px;">Snap your daily photo or sync your Cloudflare R2 bucket.</p>
-          <div style="display: flex; gap: 10px;">
+          <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 20px;">Take today’s photo. Photos from your other devices appear here after they sync.</p>
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center;">
             <button class="btn btn-primary" onclick="App.switchTab('camera')">Open Camera</button>
-            <button class="btn btn-secondary" onclick="Gallery.syncR2Bucket()">Sync R2 Bucket</button>
+            <button class="btn btn-secondary" onclick="Gallery.syncNow()">Sync Now</button>
           </div>
         </div>
       `;
@@ -281,10 +289,10 @@ const Gallery = {
 
         for (const photo of monthPhotos) {
           const isSelected = this.selectedPhotoIds.has(photo.id);
-          const imgUrl = URL.createObjectURL(photo.blob);
+          const imgUrl = this.isPrivacyMode ? '' : this.photoUrl(photo);
 
           html += `
-            <div class="mosaic-tile ${isSelected ? 'selected' : ''}" data-id="${photo.id}">
+            <div class="mosaic-tile ${isSelected ? 'selected' : ''} ${photo.pending ? 'pending' : ''}" data-id="${photo.id}">
               ${this.isPrivacyMode ? `
                 <div class="privacy-placeholder">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
@@ -316,9 +324,9 @@ const Gallery = {
   },
 
   attachEvents() {
-    const syncBtn = document.getElementById('gallery-r2-sync');
+    const syncBtn = document.getElementById('gallery-sync');
     if (syncBtn) {
-      syncBtn.addEventListener('click', () => this.syncR2Bucket());
+      syncBtn.addEventListener('click', () => this.syncNow());
     }
 
     const privacyBtn = document.getElementById('gallery-privacy-toggle');
@@ -372,7 +380,7 @@ const Gallery = {
       document.body.appendChild(modal);
     }
 
-    const imgUrl = URL.createObjectURL(photo.blob);
+    const imgUrl = this.photoUrl(photo);
     const formattedDate = new Date(photo.date).toLocaleDateString(undefined, {
       weekday: 'long',
       year: 'numeric',
@@ -394,8 +402,10 @@ const Gallery = {
           <div class="meta-date" style="font-size: 0.88rem; color: var(--text-primary); font-weight: 500;">
             ${formattedDate}
           </div>
-          <div class="meta-actions" style="display: flex; gap: 8px;">
+          <div class="meta-actions">
             <button class="btn btn-secondary" id="detail-detect-eyes">Detect Eyes</button>
+            <label class="btn btn-secondary" for="detail-replace-input">Replace</label>
+            <input type="file" id="detail-replace-input" accept="image/*" hidden>
             <button class="btn btn-danger" id="detail-delete">Delete</button>
           </div>
         </div>
@@ -406,6 +416,7 @@ const Gallery = {
 
     document.getElementById('detail-close').onclick = () => this.closeDetailModal();
     document.getElementById('detail-delete').onclick = () => this.deleteSinglePhoto(photo.id);
+    document.getElementById('detail-replace-input').onchange = (e) => this.replaceSinglePhoto(photo.id, e.target.files[0]);
 
     if (prevPhoto) {
       document.getElementById('detail-prev-btn').onclick = () => this.openDetailModal(prevPhoto.id);

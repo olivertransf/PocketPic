@@ -2,15 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="description" content="PocketPic Web — Daily photo journal with ghost alignment overlay, Cloudflare R2 storage, and time-lapse video export.">
+  <meta name="robots" content="noindex, nofollow">
   <meta name="theme-color" content="#0d0d0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>PocketPic — Daily Photo Journal</title>
   <link rel="icon" href="images/favicon.png" type="image/png">
   <link rel="apple-touch-icon" href="images/app-icon.png">
   <link rel="stylesheet" href="css/app.css">
 </head>
-<body>
+<body class="locked" data-tab="library">
 
   <!-- Top Application Header -->
   <header class="app-header">
@@ -142,15 +145,15 @@
       <div class="settings-list">
         <!-- Private Passphrase Section -->
         <div class="settings-group">
-          <div class="group-title">Security & Passphrase</div>
+          <div class="group-title">Passphrase</div>
           <div class="setting-row">
             <div class="setting-info">
-              <label>Private Passphrase</label>
-              <p>Lock access to your photo library and camera with a passphrase.</p>
+              <label>Change Passphrase</label>
+              <p>One passphrase opens this journal on every device. Changing it signs out your other devices.</p>
             </div>
           </div>
-          <div style="display: flex; gap: 10px; margin-top: 10px;">
-            <input type="password" id="settings-passphrase-input" placeholder="Set or update passphrase..." style="flex:1;">
+          <div class="inline-form">
+            <input type="password" id="settings-passphrase-input" placeholder="New passphrase" autocomplete="new-password">
             <button class="btn btn-primary" id="settings-save-passphrase">Save</button>
           </div>
         </div>
@@ -183,50 +186,18 @@
           </div>
         </div>
 
-        <!-- Cloudflare R2 Sync -->
+        <!-- Sync -->
         <div class="settings-group">
-          <div class="group-title">Cloudflare R2 Bucket Connection</div>
-          <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 12px;">
-            Configure your Cloudflare R2 storage credentials to backup photos.
-          </p>
-          <div style="display: flex; flex-direction: column; gap: 10px;">
-            <input type="text" id="settings-r2-endpoint" placeholder="Endpoint URL" value="https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com">
-            <input type="text" id="settings-r2-bucket" placeholder="Bucket Name" value="pocketpic">
-            <input type="text" id="settings-r2-access-key" placeholder="R2 Access Key ID">
-            <input type="password" id="settings-r2-secret-key" placeholder="R2 Secret Access Key">
-            <button class="btn btn-secondary" id="settings-save-r2" style="align-self: flex-end; margin-top: 4px;">
-              Save R2 Credentials
-            </button>
-          </div>
-
-          <div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-color);">
-            <div style="font-weight: 600; font-size: 0.88rem; margin-bottom: 6px;">Cloudflare R2 CORS Policy Setup</div>
-            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 10px;">
-              If browser requests are blocked by CORS policy, copy and paste this CORS policy JSON in your <strong>Cloudflare R2 Dashboard &rarr; pocketpic bucket &rarr; Settings &rarr; CORS Policy</strong>:
-            </p>
-            <pre style="background: var(--bg-surface); padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); font-size: 0.75rem; color: var(--text-primary); overflow-x: auto; font-family: monospace;">[
-  {
-    "AllowedOrigins": [
-      "https://pocket-pic.olivertran.me",
-      "http://localhost:8080",
-      "*"
-    ],
-    "AllowedMethods": [
-      "GET",
-      "PUT",
-      "POST",
-      "DELETE",
-      "HEAD"
-    ],
-    "AllowedHeaders": [
-      "*"
-    ],
-    "ExposeHeaders": [
-      "ETag"
-    ],
-    "MaxAgeSeconds": 3600
-  }
-]</pre>
+          <div class="group-title">Sync</div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <label>Cloud Library</label>
+              <p>Photos are stored in your private Cloudflare R2 bucket and sync to every device you unlock.</p>
+              <p id="settings-sync-status">Not synced yet.</p>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-secondary" id="settings-sync-now">Sync Now</button>
+            </div>
           </div>
         </div>
       </div>
@@ -245,7 +216,7 @@
           <h2 style="font-size: 1.25rem;">Private PocketPic</h2>
           <p id="unlock-passphrase-desc" style="color: var(--text-secondary); font-size: 0.88rem; margin-top: 4px;">Enter your passphrase to access your journal.</p>
         </div>
-        <input type="password" id="unlock-passphrase-input" class="passphrase-input" placeholder="Passphrase..." autofocus>
+        <input type="password" id="unlock-passphrase-input" class="passphrase-input" placeholder="Passphrase" autocomplete="current-password" autofocus>
         <div id="unlock-passphrase-error" style="color: var(--danger-color); font-size: 0.82rem; display: none;"></div>
         <button class="btn btn-primary" id="unlock-passphrase-btn" style="width: 100%; padding: 12px;">
           Unlock Journal

@@ -1,163 +1,206 @@
 //
 // Main Application Integration module for PocketPic Web
-// Controls tab navigation, event listeners, camera setup, settings, mandatory passphrase lock screen, and exports.
+// Controls tab navigation, the passphrase lock screen, background sync, camera controls, settings, and exports.
 //
+
+const SYNC_INTERVAL_MS = 30000;
 
 const App = {
   currentTab: 'library',
+  isUnlocked: false,
+  syncTimer: null,
+  galleryReady: false,
 
   async init() {
-    try {
-      // 1. Initialize Storage DB
-      await Storage.init();
-    } catch (e) {
-      console.error('Storage init error:', e);
-    }
+    await Storage.init();
 
-    // 2. Check Passphrase Lock State
-    this.checkAuth();
-
-    // 3. Initialize App Navigation
     this.setupTabNavigation();
+    this.bindLockScreen();
+    this.bindCameraControls();
+    await this.bindSettings();
+    this.bindExport();
+    this.bindSyncEvents();
 
-    // 4. Initialize Gallery first
-    const galleryContainer = document.getElementById('gallery-container');
-    if (galleryContainer) {
-      try {
-        await Gallery.init(galleryContainer);
-      } catch (e) {
-        console.error('Gallery init error:', e);
-      }
-    }
-
-    // 5. Initialize Camera & Viewfinder asynchronously
     const videoEl = document.getElementById('viewfinder-video');
     const overlayCanvasEl = document.getElementById('overlay-canvas');
     if (videoEl && overlayCanvasEl) {
       Camera.init(videoEl, overlayCanvasEl).catch(e => console.warn('Camera init warning:', e));
     }
 
-    // 6. Bind Camera Controls
-    this.bindCameraControls();
-
-    // 7. Bind Settings & Passphrase UI
-    this.bindSettings();
-
-    // 8. Bind Export UI
-    this.bindExport();
+    await this.checkAuth();
   },
 
-  checkAuth() {
-    const lockOverlay = document.getElementById('passphrase-lock-overlay');
-    const lockDesc = document.getElementById('unlock-passphrase-desc');
-    const lockBtn = document.getElementById('unlock-passphrase-btn');
-
-    if (!lockOverlay) return;
-
-    if (Auth.isUnlocked()) {
-      lockOverlay.classList.remove('active');
-    } else {
-      lockOverlay.classList.add('active');
-
-      if (!Auth.isPassphraseSet()) {
-        if (lockDesc) lockDesc.textContent = 'Create a passphrase to secure your private photo journal.';
-        if (lockBtn) lockBtn.textContent = 'Set Passphrase & Unlock';
+  async checkAuth() {
+    try {
+      const status = await Auth.status();
+      if (status.unlocked) {
+        await this.onUnlocked();
       } else {
-        if (lockDesc) lockDesc.textContent = 'Enter your passphrase to access your journal.';
-        if (lockBtn) lockBtn.textContent = 'Unlock Journal';
+        this.showLock(status.passphraseSet);
       }
-
-      this.bindLockScreen();
+    } catch (e) {
+      console.warn('Session check failed:', e);
+      this.showLock(true, 'Could not reach PocketPic. Check your connection and reload.');
     }
+  },
+
+  showLock(passphraseSet = true, errorMessage = '') {
+    this.isUnlocked = false;
+    this.stopSyncTimer();
+    Camera.stopSession();
+    document.body.classList.add('locked');
+
+    const overlay = document.getElementById('passphrase-lock-overlay');
+    const desc = document.getElementById('unlock-passphrase-desc');
+    const button = document.getElementById('unlock-passphrase-btn');
+    const errorEl = document.getElementById('unlock-passphrase-error');
+
+    if (desc) {
+      desc.textContent = passphraseSet
+        ? 'Enter your passphrase to open your journal.'
+        : 'Choose a passphrase. Every device will use it to open this journal.';
+    }
+    if (button) button.textContent = passphraseSet ? 'Unlock Journal' : 'Set Passphrase & Unlock';
+    if (errorEl) {
+      errorEl.textContent = errorMessage;
+      errorEl.style.display = errorMessage ? 'block' : 'none';
+    }
+    overlay?.classList.add('active');
+    document.getElementById('unlock-passphrase-input')?.focus();
+  },
+
+  async onUnlocked() {
+    this.isUnlocked = true;
+    document.body.classList.remove('locked');
+    document.getElementById('passphrase-lock-overlay')?.classList.remove('active');
+
+    if (!this.galleryReady) {
+      const galleryContainer = document.getElementById('gallery-container');
+      if (galleryContainer) await Gallery.init(galleryContainer);
+      this.galleryReady = true;
+    } else {
+      await Gallery.refresh();
+    }
+
+    await Camera.updateGhostOverlay();
+    if (this.currentTab === 'camera') await this.switchTab('camera');
+
+    Storage.sync().catch(() => {});
+    this.startSyncTimer();
   },
 
   bindLockScreen() {
     const unlockBtn = document.getElementById('unlock-passphrase-btn');
     const inputEl = document.getElementById('unlock-passphrase-input');
     const errorEl = document.getElementById('unlock-passphrase-error');
-
     if (!unlockBtn || !inputEl) return;
 
     const attemptUnlock = async () => {
-      const val = inputEl.value.trim();
-      if (!val) {
-        if (errorEl) {
-          errorEl.textContent = 'Please enter a passphrase.';
-          errorEl.style.display = 'block';
-        }
-        return;
-      }
+      unlockBtn.disabled = true;
+      const result = await Auth.unlock(inputEl.value);
+      unlockBtn.disabled = false;
 
-      const success = await Auth.unlock(val);
-      if (success) {
-        document.getElementById('passphrase-lock-overlay').classList.remove('active');
+      if (result.ok) {
         inputEl.value = '';
         if (errorEl) errorEl.style.display = 'none';
-        if (this.currentTab === 'library') {
-          await Gallery.refresh();
-          // Automatic background sync from R2 if configured
-          Gallery.syncR2Bucket().catch(e => console.warn('R2 auto sync error:', e));
-        }
-      } else {
-        if (errorEl) {
-          errorEl.textContent = 'Incorrect passphrase. Try again.';
-          errorEl.style.display = 'block';
-        }
+        await this.onUnlocked();
+      } else if (errorEl) {
+        errorEl.textContent = result.error;
+        errorEl.style.display = 'block';
       }
     };
 
-    unlockBtn.onclick = attemptUnlock;
-    inputEl.onkeyup = (e) => {
+    unlockBtn.addEventListener('click', attemptUnlock);
+    inputEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') attemptUnlock();
-    };
+    });
+  },
+
+  bindSyncEvents() {
+    window.addEventListener('pocketpic:locked', () => this.showLock(true, 'Your session ended. Enter your passphrase again.'));
+
+    window.addEventListener('pocketpic:photos-changed', async () => {
+      if (!this.isUnlocked) return;
+      await Gallery.refresh();
+      await Camera.updateGhostOverlay();
+    });
+
+    window.addEventListener('pocketpic:sync-status', () => {
+      if (this.isUnlocked && this.galleryReady) Gallery.render();
+      this.renderSyncStatus();
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && this.isUnlocked) Storage.sync().catch(() => {});
+    });
+
+    window.addEventListener('online', () => {
+      if (this.isUnlocked) Storage.sync().catch(() => {});
+    });
+  },
+
+  startSyncTimer() {
+    this.stopSyncTimer();
+    this.syncTimer = setInterval(() => {
+      if (document.visibilityState === 'visible' && this.isUnlocked) Storage.sync().catch(() => {});
+    }, SYNC_INTERVAL_MS);
+  },
+
+  stopSyncTimer() {
+    if (this.syncTimer) clearInterval(this.syncTimer);
+    this.syncTimer = null;
+  },
+
+  renderSyncStatus() {
+    const statusEl = document.getElementById('settings-sync-status');
+    if (!statusEl) return;
+    switch (Storage.syncState) {
+      case 'syncing':
+        statusEl.textContent = 'Syncing…';
+        break;
+      case 'error':
+        statusEl.textContent = `Last sync failed: ${Storage.syncMessage}`;
+        break;
+      case 'locked':
+        statusEl.textContent = 'Locked.';
+        break;
+      default:
+        statusEl.textContent = Storage.lastSyncedAt
+          ? `Last synced ${Storage.lastSyncedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+          : 'Not synced yet.';
+    }
   },
 
   setupTabNavigation() {
-    const navButtons = document.querySelectorAll('.nav-btn');
-    navButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const tab = btn.dataset.tab;
-        this.switchTab(tab);
-      });
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
     });
 
-    const lockBtn = document.getElementById('header-lock-btn');
-    if (lockBtn) {
-      lockBtn.addEventListener('click', () => {
-        Auth.lock();
-        this.checkAuth();
-      });
-    }
+    document.getElementById('header-lock-btn')?.addEventListener('click', async () => {
+      await Auth.lock();
+      this.showLock(true);
+    });
   },
 
   async switchTab(tabName) {
     this.currentTab = tabName;
 
-    // Update nav button active classes
     document.querySelectorAll('.nav-btn').forEach(btn => {
-      if (btn.dataset.tab === tabName) btn.classList.add('active');
-      else btn.classList.remove('active');
+      btn.classList.toggle('active', btn.dataset.tab === tabName);
     });
-
-    // Update tab pane visibility
     document.querySelectorAll('.tab-pane').forEach(pane => {
-      if (pane.id === `tab-${tabName}`) pane.classList.add('active');
-      else pane.classList.remove('active');
+      pane.classList.toggle('active', pane.id === `tab-${tabName}`);
     });
+    document.body.dataset.tab = tabName;
 
-    // Handle camera session lifecycle
-    if (tabName === 'camera') {
-      try {
-        await Camera.startSession();
-      } catch (e) {
-        alert('Could not access camera. Please allow camera permissions in browser settings.');
-      }
+    if (tabName === 'camera' && this.isUnlocked) {
+      const started = await Camera.startSession();
+      if (!started) alert('Could not access the camera. Allow camera access for this site in your browser settings.');
     } else {
       Camera.stopSession();
     }
 
-    // Refresh gallery if switching back to library
-    if (tabName === 'library') {
+    if (tabName === 'library' && this.galleryReady) {
       await Gallery.refresh();
     }
   },
@@ -167,29 +210,32 @@ const App = {
     if (shutterBtn) {
       shutterBtn.addEventListener('click', async () => {
         const frameCanvas = Camera.captureFrame();
-        if (frameCanvas) {
-          await Storage.savePhoto(frameCanvas);
-          await Camera.updateGhostOverlay();
-          await Gallery.refresh();
+        if (!frameCanvas) return;
 
-          const viewfinder = document.querySelector('.viewfinder-wrapper');
-          if (viewfinder) {
-            viewfinder.style.opacity = '0.3';
-            setTimeout(() => { viewfinder.style.opacity = '1'; }, 100);
-          }
+        const viewfinder = document.querySelector('.viewfinder-wrapper');
+        if (viewfinder) {
+          viewfinder.style.opacity = '0.3';
+          setTimeout(() => { viewfinder.style.opacity = '1'; }, 100);
+        }
+
+        shutterBtn.disabled = true;
+        try {
+          await Storage.savePhoto(frameCanvas);
+        } catch (e) {
+          alert(`Could not save photo: ${e.message}`);
+        } finally {
+          shutterBtn.disabled = false;
         }
       });
     }
 
-    const switchCamBtn = document.getElementById('camera-switch-btn');
-    if (switchCamBtn) {
-      switchCamBtn.addEventListener('click', async () => {
-        await Camera.switchCamera();
-      });
-    }
+    document.getElementById('camera-switch-btn')?.addEventListener('click', async () => {
+      await Camera.switchCamera();
+    });
 
     const toggleOverlayBtn = document.getElementById('camera-overlay-btn');
     if (toggleOverlayBtn) {
+      toggleOverlayBtn.classList.toggle('active', Camera.isOverlayVisible);
       toggleOverlayBtn.addEventListener('click', () => {
         const isVisible = Camera.toggleOverlay();
         toggleOverlayBtn.classList.toggle('active', isVisible);
@@ -198,10 +244,9 @@ const App = {
 
     const opacityRange = document.getElementById('camera-opacity-range');
     if (opacityRange) {
-      opacityRange.value = Camera.overlayOpacity;
+      Storage.getSetting('overlayOpacity', 0.4).then((value) => { opacityRange.value = value; });
       opacityRange.addEventListener('input', (e) => {
-        const opacity = parseFloat(e.target.value);
-        Camera.setOverlayOpacity(opacity);
+        Camera.setOverlayOpacity(parseFloat(e.target.value));
       });
     }
   },
@@ -213,10 +258,14 @@ const App = {
     if (setPassphraseBtn && passphraseInput) {
       passphraseInput.value = '';
       setPassphraseBtn.addEventListener('click', async () => {
-        const val = passphraseInput.value;
-        await Auth.setPassphrase(val);
-        alert(val ? 'Passphrase protection updated!' : 'Passphrase cleared.');
+        if (!passphraseInput.value.trim()) {
+          alert('Enter a new passphrase.');
+          return;
+        }
+        if (!confirm('Change the passphrase on every device? Other devices will need the new one.')) return;
+        const result = await Auth.setPassphrase(passphraseInput.value);
         passphraseInput.value = '';
+        alert(result.ok ? 'Passphrase changed.' : `Could not change passphrase: ${result.error}`);
       });
     }
 
@@ -225,8 +274,9 @@ const App = {
       settingsOpacityRange.value = await Storage.getSetting('overlayOpacity', 0.4);
       settingsOpacityRange.addEventListener('input', async (e) => {
         const opacity = parseFloat(e.target.value);
-        await Storage.setSetting('overlayOpacity', opacity);
         Camera.setOverlayOpacity(opacity);
+        const cameraRange = document.getElementById('camera-opacity-range');
+        if (cameraRange) cameraRange.value = opacity;
       });
     }
 
@@ -238,26 +288,10 @@ const App = {
       });
     }
 
-    const r2EndpointInput = document.getElementById('settings-r2-endpoint');
-    const r2AccessKeyInput = document.getElementById('settings-r2-access-key');
-    const r2SecretKeyInput = document.getElementById('settings-r2-secret-key');
-    const r2BucketInput = document.getElementById('settings-r2-bucket');
-    const r2SaveBtn = document.getElementById('settings-save-r2');
-
-    if (r2EndpointInput) r2EndpointInput.value = await Storage.getSetting('r2Endpoint', 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com');
-    if (r2AccessKeyInput) r2AccessKeyInput.value = await Storage.getSetting('r2AccessKey', '');
-    if (r2SecretKeyInput) r2SecretKeyInput.value = await Storage.getSetting('r2SecretKey', '');
-    if (r2BucketInput) r2BucketInput.value = await Storage.getSetting('r2Bucket', 'pocketpic');
-
-    if (r2SaveBtn) {
-      r2SaveBtn.addEventListener('click', async () => {
-        await Storage.setSetting('r2Endpoint', r2EndpointInput.value.trim());
-        await Storage.setSetting('r2AccessKey', r2AccessKeyInput.value.trim());
-        await Storage.setSetting('r2SecretKey', r2SecretKeyInput.value.trim());
-        await Storage.setSetting('r2Bucket', r2BucketInput.value.trim());
-        alert('Cloudflare R2 bucket configuration saved!');
-      });
-    }
+    document.getElementById('settings-sync-now')?.addEventListener('click', () => {
+      Storage.sync().catch(() => {});
+    });
+    this.renderSyncStatus();
   },
 
   bindExport() {

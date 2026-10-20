@@ -40,7 +40,7 @@
     <div class="page-hero">
       <div class="container">
         <h1>Privacy Policy</h1>
-        <p class="meta">Last updated: June 28, 2026</p>
+        <p class="meta">Last updated: October 19, 2026</p>
       </div>
     </div>
 
@@ -53,6 +53,7 @@
         <li>There is <strong>no account</strong> and <strong>no third-party analytics</strong> in the App.</li>
         <li>Camera and Photos access are used only to capture, display, and export your daily photos.</li>
         <li>Face analysis for eye alignment runs <strong>entirely on your device</strong> using Apple's Vision framework.</li>
+        <li>The separate PocketPic Web journal stores its photos in the owner's private Cloudflare R2 bucket behind a passphrase. See <a href="#web">PocketPic Web</a>.</li>
       </ul>
 
       <h2>Information the App Accesses</h2>
@@ -75,12 +76,17 @@
       <h2>Data Stored on Your Device</h2>
       <p>The App stores app preferences locally (for example: overlay opacity, export settings, privacy mode, and album name). Photo metadata used for streaks and gallery organization is stored on your device. This data is not synced to our servers.</p>
 
+      <h2 id="web">PocketPic Web</h2>
+      <p>The web version is a private, single-owner journal. Photos taken there are uploaded to the owner's private Cloudflare R2 bucket so every device that unlocks the journal sees the same library. Each browser also keeps a local copy in IndexedDB so the gallery opens quickly.</p>
+      <p>Access is gated by one shared passphrase. Only a SHA-256 hash of it is stored, in the same bucket, and a signed session cookie keeps a device unlocked for up to 30 days. A passphrase is a shared secret, not strong authentication: anyone who learns it can open the journal. Changing it signs out every device.</p>
+      <p>The web version has no analytics and no third-party trackers. Eye detection for export runs in your browser.</p>
+
       <h2>Data We Do Not Collect</h2>
       <ul>
         <li>Personal identifiers (name, email, phone number)</li>
         <li>Location data</li>
         <li>Usage analytics or advertising identifiers</li>
-        <li>Photos, videos, or face data transmitted to external servers</li>
+        <li>Photos, videos, or face data transmitted from the native app to external servers</li>
       </ul>
 
       <h2>Children's Privacy</h2>

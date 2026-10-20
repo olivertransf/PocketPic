@@ -35,6 +35,7 @@ body {
   color: var(--text-primary);
   font-family: var(--font-sans);
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
@@ -50,7 +51,21 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
-  padding: 12px 24px;
+  padding: max(12px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) 12px max(24px, env(safe-area-inset-left));
+}
+
+body.locked .app-main,
+body.locked .nav-tabs,
+body.locked .lock-btn {
+  visibility: hidden;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
 }
 
 .header-container {
@@ -215,6 +230,16 @@ h1, h2, .section-title {
   background: var(--bg-card-hover);
 }
 
+.btn-secondary.sync-error {
+  color: var(--danger-color);
+  border-color: rgba(255, 69, 58, 0.35);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Gallery & Mosaic Styles */
 .gallery-header-bar {
   display: flex;
@@ -295,6 +320,11 @@ h1, h2, .section-title {
   border-color: var(--text-primary);
 }
 
+.mosaic-tile.pending {
+  border-style: dashed;
+  border-color: var(--border-light);
+}
+
 .mosaic-tile img {
   width: 100%;
   height: 100%;
@@ -356,15 +386,22 @@ h1, h2, .section-title {
 }
 
 .viewfinder-wrapper {
+  --vf-ratio: 1.3333;
+  --vf-max-h: 62vh;
   position: relative;
-  width: 100%;
-  max-width: 680px;
-  max-height: 65vh;
+  width: min(100%, 680px, calc(var(--vf-max-h) * var(--vf-ratio)));
+  aspect-ratio: var(--vf-ratio);
   background: #000;
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border-color);
-  transition: aspect-ratio 0.2s ease;
+  transition: opacity 0.1s ease;
+}
+
+@supports (height: 100dvh) {
+  .viewfinder-wrapper {
+    --vf-max-h: 62dvh;
+  }
 }
 
 .viewfinder-video {
@@ -498,6 +535,7 @@ h1, h2, .section-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 12px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
@@ -538,6 +576,25 @@ h1, h2, .section-title {
   border-color: var(--border-light);
 }
 
+.setting-control {
+  flex-shrink: 0;
+}
+
+#settings-sync-status {
+  margin-top: 6px;
+}
+
+.inline-form {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.inline-form input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Export View */
 .export-card {
   max-width: 580px;
@@ -553,12 +610,14 @@ h1, h2, .section-title {
 
 .fps-options {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
 }
 
 .fps-btn {
   flex: 1;
+  min-width: 64px;
   padding: 10px;
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
@@ -600,8 +659,9 @@ h1, h2, .section-title {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
   background: rgba(13, 13, 15, 0.92);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -609,7 +669,7 @@ h1, h2, .section-title {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
@@ -628,6 +688,7 @@ h1, h2, .section-title {
   max-width: 420px;
   padding: 28px;
   position: relative;
+  margin: auto;
 }
 
 .modal-close {
@@ -736,10 +797,18 @@ h1, h2, .section-title {
 
 .photo-detail-meta {
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   align-items: center;
   justify-content: space-between;
   margin-top: 16px;
   padding: 0 4px;
+}
+
+.meta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* Empty State */
@@ -768,13 +837,20 @@ h1, h2, .section-title {
 
 /* Mobile (<768px) */
 @media (max-width: 767px) {
+  /* backdrop-filter would make the header the containing block for the fixed tab bar */
   .app-header {
-    padding: 10px 14px;
+    padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
+    background: rgba(13, 13, 15, 0.97);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   .header-container {
-    flex-wrap: wrap;
     gap: 10px;
+  }
+
+  .lock-btn {
+    padding: 6px 10px;
   }
 
   .nav-tabs {
@@ -788,16 +864,24 @@ h1, h2, .section-title {
     border-bottom: none;
     background: rgba(13, 13, 15, 0.95);
     backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
     justify-content: space-around;
-    padding: 8px 4px;
+    padding: 6px max(4px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
     z-index: 200;
   }
 
   .nav-btn {
+    flex: 1;
     flex-direction: column;
     font-size: 0.7rem;
-    padding: 5px 10px;
+    padding: 6px 4px;
     gap: 3px;
+    min-height: 48px;
+    justify-content: center;
+  }
+
+  .nav-btn.active {
+    border-color: transparent;
   }
 
   .mosaic-grid {
@@ -806,11 +890,13 @@ h1, h2, .section-title {
   }
 
   .app-main {
-    padding-bottom: 80px;
+    padding: 16px max(14px, env(safe-area-inset-right)) calc(84px + env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
   }
 
   .gallery-header-bar {
     padding: 14px;
+    gap: 12px;
+    margin-bottom: 20px;
   }
 
   .gallery-stats {
@@ -820,6 +906,102 @@ h1, h2, .section-title {
   .stat-value {
     font-size: 1.3rem;
   }
+
+  .gallery-actions {
+    width: 100%;
+  }
+
+  .gallery-actions .btn {
+    flex: 1;
+    padding: 9px 10px;
+    font-size: 0.85rem;
+  }
+
+  .viewfinder-wrapper {
+    --vf-max-h: max(220px, calc(100vh - 330px));
+  }
+
+  @supports (height: 100dvh) {
+    .viewfinder-wrapper {
+      --vf-max-h: max(220px, calc(100dvh - 330px - env(safe-area-inset-top) - env(safe-area-inset-bottom)));
+    }
+  }
+
+  .camera-controls {
+    padding: 14px 0 6px;
+  }
+
+  .settings-group,
+  .export-card {
+    padding: 18px;
+  }
+
+  .setting-row {
+    flex-wrap: wrap;
+  }
+
+  .photo-detail-content {
+    padding: 12px;
+  }
+
+  .photo-detail-frame,
+  .photo-detail-frame img {
+    max-height: 60vh;
+  }
+
+  .meta-actions {
+    width: 100%;
+  }
+
+  .meta-actions .btn {
+    flex: 1;
+    white-space: nowrap;
+  }
+
+  .modal-close {
+    top: 8px;
+    right: 10px;
+    z-index: 20;
+  }
+}
+
+/* Phones in landscape: controls sit beside the viewfinder so the shutter stays on screen */
+@media (max-height: 500px) and (orientation: landscape) {
+  .app-main {
+    padding-top: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .camera-container {
+    display: grid;
+    grid-template-columns: auto minmax(200px, 1fr);
+    grid-template-rows: 1fr 1fr;
+    column-gap: 16px;
+    max-width: none;
+    align-items: center;
+  }
+
+  .viewfinder-wrapper {
+    --vf-max-h: max(160px, calc(100vh - 90px));
+    grid-row: 1 / span 2;
+    width: min(60vw, calc(var(--vf-max-h) * var(--vf-ratio)));
+  }
+
+  .opacity-slider-box {
+    align-self: end;
+    margin-top: 0;
+  }
+
+  .camera-controls {
+    align-self: start;
+    padding: 12px 0 0;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) and (max-width: 767px) {
+  .app-main {
+    padding-bottom: calc(84px + env(safe-area-inset-bottom));
+  }
 }
 
 /* iPad / Tablet (768px - 1024px) */
@@ -828,10 +1010,6 @@ h1, h2, .section-title {
     grid-template-columns: repeat(4, 1fr);
     gap: 10px;
   }
-
-  .viewfinder-wrapper {
-    max-height: 60vh;
-  }
 }
 
 /* Desktop (>1024px) */
@@ -839,5 +1017,17 @@ h1, h2, .section-title {
   .mosaic-grid {
     grid-template-columns: repeat(6, 1fr);
     gap: 12px;
+  }
+}
+
+/* Wide desktop */
+@media (min-width: 1440px) {
+  .header-container,
+  .app-main {
+    max-width: 1320px;
+  }
+
+  .mosaic-grid {
+    grid-template-columns: repeat(8, 1fr);
   }
 }

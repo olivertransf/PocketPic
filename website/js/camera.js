@@ -12,6 +12,7 @@ const Camera = {
   currentDeviceId: null,
   overlayOpacity: 0.4,
   overlayImage: null,
+  overlayObjectUrl: null,
   isOverlayVisible: true,
   imageCapture: null,
 
@@ -123,7 +124,7 @@ const Camera = {
       const w = this.videoElement.videoWidth;
       const h = this.videoElement.videoHeight;
       if (w && h) {
-        wrapper.style.aspectRatio = `${w} / ${h}`;
+        wrapper.style.setProperty('--vf-ratio', String(w / h));
       }
     }
     this.renderOverlay();
@@ -187,7 +188,9 @@ const Camera = {
       };
 
       if (blobOrUrl instanceof Blob) {
-        img.src = URL.createObjectURL(blobOrUrl);
+        if (this.overlayObjectUrl) URL.revokeObjectURL(this.overlayObjectUrl);
+        this.overlayObjectUrl = URL.createObjectURL(blobOrUrl);
+        img.src = this.overlayObjectUrl;
       } else {
         img.src = blobOrUrl;
       }
@@ -281,7 +284,7 @@ const Camera = {
   },
 
   captureFrame() {
-    if (!this.videoElement) return null;
+    if (!this.videoElement || !this.stream || !this.videoElement.videoWidth) return null;
 
     const video = this.videoElement;
     const canvas = document.createElement('canvas');
