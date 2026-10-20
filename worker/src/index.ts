@@ -80,7 +80,12 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   if (path === "/api/photos" && method === "GET") {
-    const { photos } = await readIndex(env);
+    const { photos, etag } = await readIndex(env);
+    if (!etag) {
+      await env.PHOTOS.put(INDEX_KEY, JSON.stringify(photos), {
+        httpMetadata: { contentType: "application/json" },
+      });
+    }
     return json({ photos: sortNewestFirst(photos) });
   }
 
