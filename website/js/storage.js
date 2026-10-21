@@ -312,7 +312,7 @@ const Storage = {
   async getR2Url() {
     if (window.POCKETPIC_R2_URL) return window.POCKETPIC_R2_URL.trim().replace(/\/+$/, '');
     const customUrl = await this.getSetting('r2Url', null);
-    return customUrl ? customUrl.trim().replace(/\/+$/, '') : '';
+    return customUrl ? customUrl.trim().replace(/\/+$/, '') : 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com/pocketpic';
   },
 
   setSyncState(state, message = '') {
