@@ -16,8 +16,22 @@ const Auth = {
 
   async status() {
     const storedHash = localStorage.getItem(this.LOCAL_KEY);
-    const unlocked = sessionStorage.getItem(this.SESSION_KEY) === 'true';
-    return { unlocked, passphraseSet: storedHash !== null };
+    const localUnlocked = localStorage.getItem(this.SESSION_KEY) === 'true' || sessionStorage.getItem(this.SESSION_KEY) === 'true';
+
+    try {
+      const res = await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          unlocked: Boolean(data.unlocked || localUnlocked),
+          passphraseSet: Boolean(data.passphraseSet || storedHash !== null)
+        };
+      }
+    } catch {
+      // Backend API not reachable; fall back to local storage auth
+    }
+
+    return { unlocked: localUnlocked, passphraseSet: storedHash !== null };
   },
 
   async unlock(passphrase) {
@@ -25,15 +39,40 @@ const Auth = {
     if (!value) return { ok: false, error: 'Enter a passphrase.' };
 
     const hash = await this.sha256Hex(value);
+
+    try {
+      const res = await fetch('/api/unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passphrase: value }),
+        credentials: 'same-origin'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem(this.LOCAL_KEY, hash);
+        localStorage.setItem(this.SESSION_KEY, 'true');
+        sessionStorage.setItem(this.SESSION_KEY, 'true');
+        return { ok: true, created: Boolean(data?.created) };
+      }
+      if (res.status === 401 || res.status === 400) {
+        const data = await res.json().catch(() => ({}));
+        return { ok: false, error: data.error || 'Incorrect passphrase.' };
+      }
+    } catch {
+      // Backend API not reachable; fall back to local storage unlock
+    }
+
     const storedHash = localStorage.getItem(this.LOCAL_KEY);
 
     if (!storedHash) {
       localStorage.setItem(this.LOCAL_KEY, hash);
+      localStorage.setItem(this.SESSION_KEY, 'true');
       sessionStorage.setItem(this.SESSION_KEY, 'true');
       return { ok: true, created: true };
     }
 
     if (storedHash === hash) {
+      localStorage.setItem(this.SESSION_KEY, 'true');
       sessionStorage.setItem(this.SESSION_KEY, 'true');
       return { ok: true, created: false };
     }
@@ -46,12 +85,35 @@ const Auth = {
     if (!value) return { ok: false, error: 'Passphrase cannot be empty.' };
 
     const hash = await this.sha256Hex(value);
+
+    try {
+      const res = await fetch('/api/passphrase', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passphrase: value }),
+        credentials: 'same-origin'
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data.error) return { ok: false, error: data.error };
+      }
+    } catch {
+      // Backend API not reachable; proceed with local storage setPassphrase
+    }
+
     localStorage.setItem(this.LOCAL_KEY, hash);
+    localStorage.setItem(this.SESSION_KEY, 'true');
     sessionStorage.setItem(this.SESSION_KEY, 'true');
     return { ok: true };
   },
 
   async lock() {
+    try {
+      await fetch('/api/lock', { method: 'POST', credentials: 'same-origin' });
+    } catch {
+      // Ignore API lock failure
+    }
+    localStorage.removeItem(this.SESSION_KEY);
     sessionStorage.removeItem(this.SESSION_KEY);
   }
 };
