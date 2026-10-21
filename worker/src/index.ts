@@ -342,10 +342,14 @@ function dateFromKey(key: string): string | null {
     // ignore decode error
   }
 
-  const fullDateTimeIso = filename.match(/(19\d{2}|20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_.-]([0-5]\d)[:_.-]([0-5]\d)/);
+  const fullDateTimeIso = filename.match(/(19\d{2}|20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_.-]([0-5]\d)[:_.-]([0-5]\d)(?:[:_.-](\d{1,3}))?\s*(Z|[+-]\d{2}:?\d{2})?/i);
   if (fullDateTimeIso) {
-    const [, y, m, d, hh, mm, ss] = fullDateTimeIso;
-    return parseDate(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
+    const [, y, m, d, hh, mm, ss, ms, tz] = fullDateTimeIso;
+    let isoStr = `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
+    if (ms) isoStr += `.${ms.padStart(3, "0")}`;
+    if (tz) isoStr += tz;
+    else isoStr += "Z";
+    return parseDate(isoStr);
   }
 
   const fullDateTimeCompact = filename.match(/(19\d{2}|20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[-_T\s]?([01]\d|2[0-3])([0-5]\d)([0-5]\d)/);
@@ -599,6 +603,11 @@ function parseDate(value: string | number | null | undefined): string | null {
       const d = new Date(ms);
       if (!Number.isNaN(d.getTime())) return d.toISOString();
     }
+  }
+
+  const directParsed = Date.parse(str);
+  if (!Number.isNaN(directParsed) && str.includes("-") && (str.includes("T") || str.includes(" "))) {
+    return new Date(directParsed).toISOString();
   }
 
   const exifMatch = str.match(/^(19\d{2}|20\d{2})[:/-](0[1-9]|1[0-2])[:/-](0[1-9]|[12]\d|3[01])[\sT_]?([01]\d|2[0-3])?[:_.-]?([0-5]\d)?[:_.-]?([0-5]\d)?(.*)$/);

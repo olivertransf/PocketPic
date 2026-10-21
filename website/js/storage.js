@@ -33,6 +33,11 @@ function parseDateString(value) {
     }
   }
 
+  const directParsed = Date.parse(str);
+  if (!Number.isNaN(directParsed) && str.includes('-') && (str.includes('T') || str.includes(' '))) {
+    return new Date(directParsed).toISOString();
+  }
+
   const exifMatch = str.match(/^(19\d{2}|20\d{2})[:/-](0[1-9]|1[0-2])[:/-](0[1-9]|[12]\d|3[01])[\sT_]?([01]\d|2[0-3])?[:_.-]?([0-5]\d)?[:_.-]?([0-5]\d)?(.*)$/);
   if (exifMatch) {
     const [, y, m, d, hh = '12', mm = '00', ss = '00', tz = ''] = exifMatch;
@@ -57,10 +62,14 @@ function dateFromFilename(filename) {
     cleanName = decodeURIComponent(cleanName);
   } catch {}
 
-  const fullDateTimeIso = cleanName.match(/(19\d{2}|20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_.-]([0-5]\d)[:_.-]([0-5]\d)/);
+  const fullDateTimeIso = cleanName.match(/(19\d{2}|20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_.-]([0-5]\d)[:_.-]([0-5]\d)(?:[:_.-](\d{1,3}))?\s*(Z|[+-]\d{2}:?\d{2})?/i);
   if (fullDateTimeIso) {
-    const [, y, m, d, hh, mm, ss] = fullDateTimeIso;
-    return parseDateString(`${y}-${m}-${d}T${hh}:${mm}:${ss}Z`);
+    const [, y, m, d, hh, mm, ss, ms, tz] = fullDateTimeIso;
+    let isoStr = `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
+    if (ms) isoStr += `.${ms.padStart(3, '0')}`;
+    if (tz) isoStr += tz;
+    else isoStr += 'Z';
+    return parseDateString(isoStr);
   }
 
   const fullDateTimeCompact = cleanName.match(/(19\d{2}|20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])[-_T\s]?([01]\d|2[0-3])([0-5]\d)([0-5]\d)/);
@@ -303,7 +312,7 @@ const Storage = {
   async getR2Url() {
     if (window.POCKETPIC_R2_URL) return window.POCKETPIC_R2_URL.trim().replace(/\/+$/, '');
     const customUrl = await this.getSetting('r2Url', null);
-    return customUrl ? customUrl.trim().replace(/\/+$/, '') : '';
+    return customUrl ? customUrl.trim().replace(/\/+$/, '') : 'https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com/pocketpic';
   },
 
   setSyncState(state, message = '') {
