@@ -107,6 +107,14 @@ function dateFromKey(key) {
     // ignore decode error
   }
 
+  const stem = filename.replace(/\.[^.]+$/, "");
+  if (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(stem) ||
+    /^[0-9a-f]{32}$/i.test(stem)
+  ) {
+    return null;
+  }
+
   const fullDateTimeIso = filename.match(/(19\d{2}|20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])[-_T\s]([01]\d|2[0-3])[:_.-]([0-5]\d)[:_.-]([0-5]\d)(?:[:_.-](\d{1,3}))?\s*(Z|[+-]\d{2}:?\d{2})?/i);
   if (fullDateTimeIso) {
     const [, y, m, d, hh, mm, ss, ms, tz] = fullDateTimeIso;
@@ -137,6 +145,9 @@ function dateFromKey(key) {
   if (compactDate) {
     return parseDate(`${compactDate[1]}-${compactDate[2]}-${compactDate[3]}T12:00:00Z`);
   }
+
+  // Do not match timestamp numbers if stem contains hex/alphanumeric mix (e.g. UUID fragments)
+  if (/[a-zA-Z]/.test(stem)) return null;
 
   const millis = filename.match(/(?:^|[^0-9])([12]\d{12})(?:[^0-9]|$)/);
   if (millis) return parseDate(Number(millis[1]));
