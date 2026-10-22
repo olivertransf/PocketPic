@@ -34,7 +34,7 @@ export async function rebuildBucketIndex(env) {
       let capturedAt = getCapturedAtMetadata(object.customMetadata) ?? dateFromKey(object.key);
       if (!capturedAt) {
         try {
-          const header = await env.PHOTOS.get(object.key, { range: { length: 131072 } });
+          const header = await env.PHOTOS.get(object.key, { range: { offset: 0, length: 524288 } });
           if (header) {
             const buf = new Uint8Array(await header.arrayBuffer());
             capturedAt = parseExifDate(buf);
@@ -76,8 +76,18 @@ function getCapturedAtMetadata(customMetadata) {
       cleanKey === "capturedat" ||
       cleanKey === "captured_at" ||
       cleanKey === "captured-at" ||
+      cleanKey === "capturedate" ||
+      cleanKey === "capture_date" ||
       cleanKey === "date" ||
       cleanKey === "x-photo-date" ||
+      cleanKey === "photo_date" ||
+      cleanKey === "photodate" ||
+      cleanKey === "photo-date" ||
+      cleanKey === "picture_date" ||
+      cleanKey === "picturedate" ||
+      cleanKey === "exif_date" ||
+      cleanKey === "exifdate" ||
+      cleanKey === "exif-date" ||
       cleanKey === "createdat" ||
       cleanKey === "created_at" ||
       cleanKey === "creationdate" ||
@@ -87,8 +97,11 @@ function getCapturedAtMetadata(customMetadata) {
       cleanKey === "timestamp" ||
       cleanKey === "datetimeoriginal" ||
       cleanKey === "date-time-original" ||
+      cleanKey === "datetime_original" ||
       cleanKey === "datetime" ||
       cleanKey === "created" ||
+      cleanKey === "date_created" ||
+      cleanKey === "datecreated" ||
       cleanKey === "originationdate" ||
       cleanKey === "time"
     ) {
@@ -181,8 +194,11 @@ function parseExifDate(arrayBuffer) {
           bytes[app1Offset + 4] === 0x00 &&
           bytes[app1Offset + 5] === 0x00
         ) {
-          return parseTiffExifDate(bytes, app1Offset + 6);
+          const res = parseTiffExifDate(bytes, app1Offset + 6);
+          if (res) return res;
         }
+        const directTiff = parseTiffExifDate(bytes, app1Offset);
+        if (directTiff) return directTiff;
       }
       offset += 2 + length;
     }
@@ -203,7 +219,8 @@ function parseExifDate(arrayBuffer) {
           bytes[payloadOffset] === 0x45 && bytes[payloadOffset + 1] === 0x78 &&
           bytes[payloadOffset + 2] === 0x69 && bytes[payloadOffset + 3] === 0x66
         ) {
-          return parseTiffExifDate(bytes, payloadOffset + 6);
+          const res = parseTiffExifDate(bytes, payloadOffset + 6);
+          if (res) return res;
         }
         return parseTiffExifDate(bytes, payloadOffset);
       }
@@ -220,8 +237,37 @@ function parseExifDate(arrayBuffer) {
       const chunkSize = ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
       const chunkType = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
       const payloadOffset = offset + 8;
+
       if (chunkType === "eXIf" && payloadOffset < bytes.length) {
-        return parseTiffExifDate(bytes, payloadOffset);
+        const res = parseTiffExifDate(bytes, payloadOffset);
+        if (res) return res;
+      } else if (chunkType === "tIME" && payloadOffset + 7 <= bytes.length) {
+        const year = (bytes[payloadOffset] << 8) | bytes[payloadOffset + 1];
+        const month = bytes[payloadOffset + 2];
+        const day = bytes[payloadOffset + 3];
+        const hour = bytes[payloadOffset + 4];
+        const minute = bytes[payloadOffset + 5];
+        const second = bytes[payloadOffset + 6];
+        const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}Z`;
+        const res = parseDate(iso);
+        if (res) return res;
+      } else if ((chunkType === "tEXt" || chunkType === "iTXt") && payloadOffset + chunkSize <= bytes.length) {
+        let keyword = "";
+        let kOffset = payloadOffset;
+        while (kOffset < payloadOffset + chunkSize && bytes[kOffset] !== 0) {
+          keyword += String.fromCharCode(bytes[kOffset]);
+          kOffset++;
+        }
+        const cleanKw = keyword.toLowerCase().trim();
+        if (cleanKw.includes("creation") || cleanKw.includes("date") || cleanKw.includes("time")) {
+          let textVal = "";
+          for (let p = kOffset + 1; p < payloadOffset + chunkSize; p++) {
+            if (bytes[p] === 0) continue;
+            textVal += String.fromCharCode(bytes[p]);
+          }
+          const res = parseDate(textVal);
+          if (res) return res;
+        }
       }
       offset += 12 + chunkSize;
     }
@@ -311,7 +357,7 @@ function parseDate(value) {
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
 
-  const str = String(value).trim();
+  let str = String(value).replace(/\0/g, "").trim();
   if (!str) return null;
 
   if (/^\d{9,13}$/.test(str)) {
@@ -332,13 +378,19 @@ function parseDate(value) {
   if (exifMatch) {
     const [, y, m, d, hh = "12", mm = "00", ss = "00", tz = ""] = exifMatch;
     let isoCandidate = `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
-    if (tz && tz.trim()) {
-      isoCandidate += tz.trim();
+    const cleanTz = tz.trim();
+    if (cleanTz && /^(Z|[+-]\d{2}:?\d{2})$/i.test(cleanTz)) {
+      isoCandidate += cleanTz;
     } else {
       isoCandidate += "Z";
     }
     const parsedExif = Date.parse(isoCandidate);
     if (!Number.isNaN(parsedExif)) return new Date(parsedExif).toISOString();
+  }
+
+  const bareIso = str.match(/^(19\d{2}|20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])$/);
+  if (bareIso) {
+    return new Date(`${bareIso[1]}-${bareIso[2]}-${bareIso[3]}T12:00:00Z`).toISOString();
   }
 
   const time = Date.parse(str);

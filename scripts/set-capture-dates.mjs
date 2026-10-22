@@ -31,8 +31,18 @@ function getCapturedAtMetadata(customMetadata) {
       cleanKey === "capturedat" ||
       cleanKey === "captured_at" ||
       cleanKey === "captured-at" ||
+      cleanKey === "capturedate" ||
+      cleanKey === "capture_date" ||
       cleanKey === "date" ||
       cleanKey === "x-photo-date" ||
+      cleanKey === "photo_date" ||
+      cleanKey === "photodate" ||
+      cleanKey === "photo-date" ||
+      cleanKey === "picture_date" ||
+      cleanKey === "picturedate" ||
+      cleanKey === "exif_date" ||
+      cleanKey === "exifdate" ||
+      cleanKey === "exif-date" ||
       cleanKey === "createdat" ||
       cleanKey === "created_at" ||
       cleanKey === "creationdate" ||
@@ -42,8 +52,11 @@ function getCapturedAtMetadata(customMetadata) {
       cleanKey === "timestamp" ||
       cleanKey === "datetimeoriginal" ||
       cleanKey === "date-time-original" ||
+      cleanKey === "datetime_original" ||
       cleanKey === "datetime" ||
       cleanKey === "created" ||
+      cleanKey === "date_created" ||
+      cleanKey === "datecreated" ||
       cleanKey === "originationdate" ||
       cleanKey === "time"
     ) {
