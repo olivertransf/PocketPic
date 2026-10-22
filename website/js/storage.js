@@ -21,7 +21,7 @@ function parseDateString(value) {
     const d = new Date(ms);
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
   }
-  const str = String(value).trim();
+  const str = String(value).replace(/\0/g, '').trim();
   if (!str) return null;
 
   if (/^\d{9,13}$/.test(str)) {
@@ -42,13 +42,19 @@ function parseDateString(value) {
   if (exifMatch) {
     const [, y, m, d, hh = '12', mm = '00', ss = '00', tz = ''] = exifMatch;
     let isoCandidate = `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
-    if (tz && tz.trim()) {
-      isoCandidate += tz.trim();
+    const cleanTz = tz.trim();
+    if (cleanTz && /^(Z|[+-]\d{2}:?\d{2})$/i.test(cleanTz)) {
+      isoCandidate += cleanTz;
     } else {
       isoCandidate += 'Z';
     }
     const parsedExif = Date.parse(isoCandidate);
     if (!Number.isNaN(parsedExif)) return new Date(parsedExif).toISOString();
+  }
+
+  const bareIso = str.match(/^(19\d{2}|20\d{2})[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01])$/);
+  if (bareIso) {
+    return new Date(`${bareIso[1]}-${bareIso[2]}-${bareIso[3]}T12:00:00Z`).toISOString();
   }
 
   const time = Date.parse(str);
@@ -207,8 +213,11 @@ function parseExifDate(arrayBuffer) {
           bytes[app1Offset + 4] === 0x00 &&
           bytes[app1Offset + 5] === 0x00
         ) {
-          return parseTiffExifDate(bytes, app1Offset + 6);
+          const res = parseTiffExifDate(bytes, app1Offset + 6);
+          if (res) return res;
         }
+        const directTiff = parseTiffExifDate(bytes, app1Offset);
+        if (directTiff) return directTiff;
       }
       offset += 2 + length;
     }
@@ -229,7 +238,8 @@ function parseExifDate(arrayBuffer) {
           bytes[payloadOffset] === 0x45 && bytes[payloadOffset + 1] === 0x78 &&
           bytes[payloadOffset + 2] === 0x69 && bytes[payloadOffset + 3] === 0x66
         ) {
-          return parseTiffExifDate(bytes, payloadOffset + 6);
+          const res = parseTiffExifDate(bytes, payloadOffset + 6);
+          if (res) return res;
         }
         return parseTiffExifDate(bytes, payloadOffset);
       }
@@ -246,8 +256,37 @@ function parseExifDate(arrayBuffer) {
       const chunkSize = ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
       const chunkType = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
       const payloadOffset = offset + 8;
+
       if (chunkType === 'eXIf' && payloadOffset < bytes.length) {
-        return parseTiffExifDate(bytes, payloadOffset);
+        const res = parseTiffExifDate(bytes, payloadOffset);
+        if (res) return res;
+      } else if (chunkType === 'tIME' && payloadOffset + 7 <= bytes.length) {
+        const year = (bytes[payloadOffset] << 8) | bytes[payloadOffset + 1];
+        const month = bytes[payloadOffset + 2];
+        const day = bytes[payloadOffset + 3];
+        const hour = bytes[payloadOffset + 4];
+        const minute = bytes[payloadOffset + 5];
+        const second = bytes[payloadOffset + 6];
+        const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}Z`;
+        const res = parseDateString(iso);
+        if (res) return res;
+      } else if ((chunkType === 'tEXt' || chunkType === 'iTXt') && payloadOffset + chunkSize <= bytes.length) {
+        let keyword = '';
+        let kOffset = payloadOffset;
+        while (kOffset < payloadOffset + chunkSize && bytes[kOffset] !== 0) {
+          keyword += String.fromCharCode(bytes[kOffset]);
+          kOffset++;
+        }
+        const cleanKw = keyword.toLowerCase().trim();
+        if (cleanKw.includes('creation') || cleanKw.includes('date') || cleanKw.includes('time')) {
+          let textVal = '';
+          for (let p = kOffset + 1; p < payloadOffset + chunkSize; p++) {
+            if (bytes[p] === 0) continue;
+            textVal += String.fromCharCode(bytes[p]);
+          }
+          const res = parseDateString(textVal);
+          if (res) return res;
+        }
       }
       offset += 12 + chunkSize;
     }
@@ -260,7 +299,7 @@ async function extractPhotoCapturedDate(file) {
   if (!file) return null;
 
   try {
-    const slice = file.slice(0, 131072);
+    const slice = file.slice(0, 524288);
     const buf = await slice.arrayBuffer();
     const exifDate = parseExifDate(buf);
     if (exifDate) return exifDate;
@@ -382,10 +421,12 @@ const Storage = {
     const updatedRecord = {
       ...existing,
       date: parsed.toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      pending: true
     };
     await this.putRecord(updatedRecord);
     this.notifyPhotosChanged();
+    this.sync().catch(() => {});
     return updatedRecord;
   },
 
@@ -421,8 +462,16 @@ const Storage = {
   },
 
   async deletePhotos(ids) {
-    for (const id of ids) await this.deleteRecord(id);
+    const validIds = Array.from(ids || []).filter(Boolean);
+    for (const id of validIds) await this.deleteRecord(id);
+
+    // Queue pending deletion IDs
+    const pendingDeletes = new Set(await this.getSetting('pendingDeletes', []));
+    for (const id of validIds) pendingDeletes.add(id);
+    await this.setSetting('pendingDeletes', Array.from(pendingDeletes));
+
     this.notifyPhotosChanged();
+    this.sync().catch(() => {});
     return true;
   },
 
@@ -447,6 +496,27 @@ const Storage = {
     let changed = false;
 
     try {
+      // 1. Process pending remote deletions first
+      const pendingDeletes = await this.getSetting('pendingDeletes', []);
+      if (Array.isArray(pendingDeletes) && pendingDeletes.length > 0) {
+        try {
+          const res = await fetch('/api/photos/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: pendingDeletes }),
+            credentials: 'same-origin'
+          });
+          if (res.status === 401) throw new LockedError();
+          if (res.ok) {
+            await this.setSetting('pendingDeletes', []);
+          }
+        } catch (e) {
+          if (e instanceof LockedError) throw e;
+          // Ignore network delete error and retry later
+        }
+      }
+
+      // 2. Fetch remote list
       const remote = await this.fetchRemoteList();
 
       if (remote === null) {
@@ -454,23 +524,51 @@ const Storage = {
         return false;
       }
 
-      const localById = new Map((await this.getAllPhotos()).map((record) => [record.id, record]));
+      const allLocal = await this.getAllPhotos();
+      const localById = new Map(allLocal.map((record) => [record.id, record]));
+
+      // 3. Upload pending local records to remote Worker API
+      for (const record of allLocal) {
+        if (record.pending && record.blob) {
+          const uploaded = await this.uploadPhotoToRemote(record);
+          if (uploaded) {
+            await this.putRecord({ ...record, pending: false, updatedAt: uploaded.updatedAt || record.updatedAt });
+            changed = true;
+          }
+        }
+      }
+
+      // Re-read remote list if uploads occurred to sync updated state
+      const updatedRemote = changed ? (await this.fetchRemoteList() || remote) : remote;
 
       const toDownload = [];
-      for (const meta of remote) {
+      for (const meta of updatedRemote) {
         const record = localById.get(meta.id);
         if (!record) {
           toDownload.push(meta);
-        } else if (record.updatedAt !== meta.updatedAt || !record.blob) {
+        } else if (!record.blob) {
           toDownload.push(meta);
-        } else if (record.date !== meta.date) {
-          await this.putRecord({
-            ...record,
-            date: meta.date,
-            updatedAt: meta.updatedAt,
-            pending: false
-          });
-          changed = true;
+        } else {
+          const localUpdated = record.updatedAt ? new Date(record.updatedAt).getTime() : 0;
+          const remoteUpdated = meta.updatedAt ? new Date(meta.updatedAt).getTime() : 0;
+
+          if (record.date !== meta.date) {
+            if (localUpdated > remoteUpdated) {
+              // Local date edit is newer; push to remote
+              await this.uploadPhotoToRemote(record);
+            } else {
+              // Accept remote date edit
+              await this.putRecord({
+                ...record,
+                date: meta.date,
+                updatedAt: meta.updatedAt,
+                pending: false
+              });
+              changed = true;
+            }
+          } else if (localUpdated < remoteUpdated) {
+            toDownload.push(meta);
+          }
         }
       }
 
@@ -494,6 +592,19 @@ const Storage = {
   },
 
   async fetchRemoteList() {
+    try {
+      const res = await fetch('/api/photos', { cache: 'no-store', credentials: 'same-origin' });
+      if (res.status === 401) throw new LockedError();
+      if (res.ok) {
+        const body = await res.json();
+        const list = Array.isArray(body) ? body : (Array.isArray(body?.photos) ? body.photos : []);
+        return list;
+      }
+    } catch (e) {
+      if (e instanceof LockedError) throw e;
+      // Worker API not reachable; fall back to direct R2 URL if configured
+    }
+
     const r2Url = await this.getR2Url();
     if (!r2Url) return null;
 
@@ -510,16 +621,57 @@ const Storage = {
     return null;
   },
 
+  async uploadPhotoToRemote(record) {
+    if (!record || !record.blob) return null;
+    try {
+      const headers = {
+        'Content-Type': record.mimeType || record.blob.type || 'image/jpeg',
+        'X-Photo-Date': record.date
+      };
+      if (record.width) headers['X-Photo-Width'] = String(record.width);
+      if (record.height) headers['X-Photo-Height'] = String(record.height);
+
+      const res = await fetch(`/api/photos/${encodeURIComponent(record.id)}`, {
+        method: 'PUT',
+        headers,
+        body: record.blob,
+        credentials: 'same-origin'
+      });
+      if (res.status === 401) throw new LockedError();
+      if (res.ok) {
+        const data = await res.json();
+        return data?.photo || { id: record.id, date: record.date };
+      }
+    } catch (e) {
+      if (e instanceof LockedError) throw e;
+      console.warn('Remote upload warning:', e);
+    }
+    return null;
+  },
+
   async downloadPhoto(meta) {
     let blob = null;
-    const r2Url = await this.getR2Url();
 
-    if (r2Url && meta.key) {
-      try {
-        const res = await fetch(`${r2Url}/${meta.key}`);
-        if (res.ok) blob = await res.blob();
-      } catch (e) {
-        console.warn('Direct R2 photo download warning:', e);
+    try {
+      const res = await fetch(`/api/photos/${encodeURIComponent(meta.id)}`, { credentials: 'same-origin' });
+      if (res.status === 401) throw new LockedError();
+      if (res.ok) {
+        blob = await res.blob();
+      }
+    } catch (e) {
+      if (e instanceof LockedError) throw e;
+      // Worker API fetch failed; fall back to direct R2 URL
+    }
+
+    if (!blob) {
+      const r2Url = await this.getR2Url();
+      if (r2Url && meta.key) {
+        try {
+          const res = await fetch(`${r2Url}/${meta.key}`);
+          if (res.ok) blob = await res.blob();
+        } catch (e) {
+          console.warn('Direct R2 photo download warning:', e);
+        }
       }
     }
 
