@@ -329,6 +329,7 @@ const Storage = {
   lastSyncedAt: null,
   syncState: 'idle',
   syncMessage: '',
+  syncTotal: null,
 
   async init() {
     if (this.db) return this.db;
@@ -567,20 +568,49 @@ const Storage = {
               changed = true;
             }
           } else if (localUpdated < remoteUpdated) {
-            toDownload.push(meta);
+            // Same bytes on this device: only the date was corrected remotely, so no re-download.
+            if (record.blob && meta.size && record.blob.size === meta.size) {
+              await this.putRecord({
+                ...record,
+                date: meta.date,
+                dateSource: meta.dateSource ?? null,
+                updatedAt: meta.updatedAt,
+                pending: false
+              });
+              changed = true;
+            } else {
+              toDownload.push(meta);
+            }
+          } else if (record.dateSource !== (meta.dateSource ?? null)) {
+            await this.putRecord({ ...record, dateSource: meta.dateSource ?? null });
+            changed = true;
           }
         }
       }
 
-      for (let i = 0; i < toDownload.length; i += 4) {
-        await Promise.all(toDownload.slice(i, i + 4).map((meta) => this.downloadPhoto(meta)));
-        changed = true;
+      if (toDownload.length > 0) {
+        // Newest photos arrive first, so show them while the rest downloads.
+        this.syncTotal = updatedRemote.length;
+        let lastProgressNotify = Date.now();
+        try {
+          for (let i = 0; i < toDownload.length; i += 4) {
+            await Promise.all(toDownload.slice(i, i + 4).map((meta) => this.downloadPhoto(meta)));
+            changed = true;
+            if (i + 4 < toDownload.length && Date.now() - lastProgressNotify >= 1500) {
+              lastProgressNotify = Date.now();
+              this.notifyPhotosChanged();
+            }
+          }
+        } finally {
+          this.syncTotal = null;
+        }
       }
 
       this.setSyncState('idle');
     } catch (e) {
       if (e instanceof LockedError) {
         this.setSyncState('locked');
+        window.dispatchEvent(new CustomEvent('pocketpic:locked'));
       } else {
         console.warn('Sync notice:', e);
         this.setSyncState('idle', 'Local storage mode');
@@ -686,6 +716,7 @@ const Storage = {
     await this.putRecord({
       id: meta.id,
       date: meta.date,
+      dateSource: meta.dateSource ?? null,
       blob,
       width,
       height,
@@ -713,7 +744,13 @@ const Storage = {
     await this.init();
     if (!this.db) return [];
     const photos = await this.request(this.PHOTOS_STORE, 'readonly', (store) => store.getAll(), []);
-    return (photos || []).sort((a, b) => new Date(b.date) - new Date(a.date));
+    // Photos whose date could not be recovered stay at the end of the library.
+    return (photos || []).sort((a, b) => {
+      const aUndated = a.dateSource === 'uploaded';
+      const bUndated = b.dateSource === 'uploaded';
+      if (aUndated !== bUndated) return aUndated ? 1 : -1;
+      return new Date(b.date) - new Date(a.date);
+    });
   },
 
   async getPhoto(id) {

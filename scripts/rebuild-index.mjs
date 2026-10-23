@@ -31,13 +31,19 @@ export async function rebuildBucketIndex(env) {
       while (seen.has(id)) id = `${baseId.slice(0, 90)}_${seen.size}`;
       seen.add(id);
 
-      let capturedAt = getCapturedAtMetadata(object.customMetadata) ?? dateFromKey(object.key);
+      let capturedAt = getCapturedAtMetadata(object.customMetadata);
+      let dateSource = capturedAt ? "metadata" : null;
+      if (!capturedAt) {
+        capturedAt = dateFromKey(object.key);
+        if (capturedAt) dateSource = "filename";
+      }
       if (!capturedAt) {
         try {
           const header = await env.PHOTOS.get(object.key, { range: { offset: 0, length: 524288 } });
           if (header) {
             const buf = new Uint8Array(await header.arrayBuffer());
             capturedAt = parseExifDate(buf);
+            if (capturedAt) dateSource = "exif";
           }
         } catch {
           // ignore EXIF parse failure
@@ -49,6 +55,7 @@ export async function rebuildBucketIndex(env) {
         id,
         key: object.key,
         date,
+        dateSource: dateSource ?? "uploaded",
         mimeType: object.httpMetadata?.contentType ?? mimeType,
         width: null,
         height: null,

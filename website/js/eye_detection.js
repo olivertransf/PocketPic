@@ -1,99 +1,112 @@
 //
 // EyeDetection module for PocketPic Web
-// Client-side face landmark and eye position detection using native Web APIs or lightweight canvas analysis algorithms.
+// Face landmark detection with MediaPipe Face Landmarker (the web equivalent of the
+// Vision request used by the iOS app). Returns the centroid of each eye contour in
+// image pixels, or null when no face is found.
 //
 
-const EyeDetection = {
-  // Check if browser native FaceDetector API (Chromium / Shape Detection API) is available
-  hasNativeFaceDetector: 'FaceDetector' in window,
-  faceDetector: null,
+const FACE_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+const TASKS_VISION_VERSION = '1.0.1';
+const TASKS_VISION_CDN = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}`;
 
-  async init() {
-    if (this.hasNativeFaceDetector && !this.faceDetector) {
+// MediaPipe face-mesh eye contours (16 points each).
+const LEFT_EYE_INDICES = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246];
+const RIGHT_EYE_INDICES = [263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466];
+
+const EyeDetection = {
+  landmarkerPromise: null,
+
+  async preload() {
+    return this.loadLandmarker();
+  },
+
+  loadLandmarker() {
+    if (this.landmarkerPromise) return this.landmarkerPromise;
+
+    this.landmarkerPromise = (async () => {
+      const { FaceLandmarker, FilesetResolver } = await import(`${TASKS_VISION_CDN}/vision_bundle.mjs`);
+      const fileset = await FilesetResolver.forVisionTasks(`${TASKS_VISION_CDN}/wasm`);
+      const options = {
+        baseOptions: { modelAssetPath: FACE_MODEL_URL, delegate: 'GPU' },
+        runningMode: 'IMAGE',
+        numFaces: 1
+      };
+
       try {
-        // Request landmark detection if supported
-        this.faceDetector = new window.FaceDetector({ maxDetectedFaces: 1, fastMode: false });
+        return await FaceLandmarker.createFromOptions(fileset, options);
       } catch (e) {
-        console.warn('Native FaceDetector initialization error:', e);
-        this.hasNativeFaceDetector = false;
+        console.warn('GPU face landmarker unavailable, using CPU:', e);
+        return FaceLandmarker.createFromOptions(fileset, {
+          ...options,
+          baseOptions: { modelAssetPath: FACE_MODEL_URL }
+        });
       }
-    }
+    })().catch((error) => {
+      this.landmarkerPromise = null;
+      throw error;
+    });
+
+    return this.landmarkerPromise;
   },
 
   async detectEyes(imageSource) {
-    await this.init();
-
-    // Convert source (blob, image, canvas, element) to ImageElement / Canvas
     const img = await this.loadImage(imageSource);
     if (!img) return null;
 
     const width = img.naturalWidth || img.width;
     const height = img.naturalHeight || img.height;
+    if (!width || !height) return null;
 
-    // 1. Try Native FaceDetector API first
-    if (this.hasNativeFaceDetector && this.faceDetector) {
-      try {
-        const faces = await this.faceDetector.detect(img);
-        if (faces && faces.length > 0) {
-          const face = faces[0];
-          const landmarks = face.landmarks || [];
-          const leftEyeLandmark = landmarks.find(l => l.type === 'eye' && l.location.x < face.boundingBox.x + face.boundingBox.width / 2) || landmarks.find(l => l.type === 'eye');
-          const rightEyeLandmark = landmarks.find(l => l.type === 'eye' && l.location.x >= face.boundingBox.x + face.boundingBox.width / 2);
+    const landmarker = await this.loadLandmarker();
+    const result = landmarker.detect(img);
+    const face = result?.faceLandmarks?.[0];
+    if (!face || face.length === 0) return null;
 
-          if (leftEyeLandmark && rightEyeLandmark) {
-            return {
-              leftEye: { x: leftEyeLandmark.location.x, y: leftEyeLandmark.location.y },
-              rightEye: { x: rightEyeLandmark.location.x, y: rightEyeLandmark.location.y },
-              imageSize: { width, height }
-            };
-          }
+    const leftEye = this.eyeCenter(face, LEFT_EYE_INDICES, width, height);
+    const rightEye = this.eyeCenter(face, RIGHT_EYE_INDICES, width, height);
+    if (!leftEye || !rightEye) return null;
 
-          // If box exists but no explicit eye landmarks, estimate eyes from face bounding box
-          if (face.boundingBox) {
-            const box = face.boundingBox;
-            const leftEye = {
-              x: box.x + box.width * 0.3,
-              y: box.y + box.height * 0.35
-            };
-            const rightEye = {
-              x: box.x + box.width * 0.7,
-              y: box.y + box.height * 0.35
-            };
-            return { leftEye, rightEye, imageSize: { width, height } };
-          }
-        }
-      } catch (e) {
-        console.warn('Native face detection failed, using fallback:', e);
-      }
-    }
-
-    // 2. Client-side heuristic fallback detector (Luminance & contrast analysis in upper face region)
-    return this.detectEyesFallback(img, width, height);
+    return { leftEye, rightEye, imageSize: { width, height } };
   },
 
-  async detectEyesFallback(img, width, height) {
-    // Clean facial proportion fallback without erratic pixel scanning
-    return {
-      leftEye: { x: width * 0.35, y: height * 0.38 },
-      rightEye: { x: width * 0.65, y: height * 0.38 },
-      imageSize: { width, height }
-    };
+  eyeCenter(landmarks, indices, width, height) {
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
+
+    for (const index of indices) {
+      const point = landmarks[index];
+      if (!point) continue;
+      sumX += point.x;
+      sumY += point.y;
+      count++;
+    }
+
+    if (count === 0) return null;
+    return { x: (sumX / count) * width, y: (sumY / count) * height };
   },
 
   loadImage(source) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       if (source instanceof HTMLImageElement) {
-        if (source.complete) resolve(source);
-        else {
-          source.onload = () => resolve(source);
-          source.onerror = reject;
+        if (source.complete && source.naturalWidth) {
+          resolve(source);
+          return;
         }
+        source.onload = () => resolve(source);
+        source.onerror = () => resolve(null);
         return;
       }
 
       const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
+      img.onload = () => {
+        if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+        resolve(img);
+      };
+      img.onerror = () => {
+        if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+        resolve(null);
+      };
 
       if (source instanceof Blob) {
         img.src = URL.createObjectURL(source);
@@ -102,7 +115,7 @@ const EyeDetection = {
       } else if (source instanceof HTMLCanvasElement || source instanceof HTMLVideoElement) {
         resolve(source);
       } else {
-        reject(new Error('Invalid image source for eye detection'));
+        resolve(null);
       }
     });
   }

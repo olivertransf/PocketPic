@@ -10,6 +10,10 @@ const Gallery = {
   isSelectionMode: false,
   isPrivacyMode: false,
   objectUrls: new Map(),
+  pageSize: 20,
+  visibleCount: 0,
+  loadObserver: null,
+  boundTiles: new WeakSet(),
 
   async init(containerEl) {
     this.containerElement = containerEl;
@@ -48,7 +52,7 @@ const Gallery = {
     }
 
     const uniqueDays = new Set(
-      this.photos.map(p => {
+      this.photos.filter(p => p.dateSource !== 'uploaded').map(p => {
         const d = new Date(p.date);
         return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       })
@@ -101,16 +105,17 @@ const Gallery = {
     return { currentStreak, longestStreak };
   },
 
-  groupPhotosByMonth() {
+  groupPhotosByMonth(photos = this.photos) {
     const groups = {};
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
 
-    for (const photo of this.photos) {
-      const d = new Date(photo.date);
-      const key = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+    for (const photo of photos) {
+      const key = photo.dateSource === 'uploaded'
+        ? 'Date unknown'
+        : `${monthNames[new Date(photo.date).getMonth()]} ${new Date(photo.date).getFullYear()}`;
       if (!groups[key]) groups[key] = [];
       groups[key].push(photo);
     }
@@ -252,13 +257,21 @@ const Gallery = {
     if (!this.containerElement) return;
 
     const { currentStreak, longestStreak } = this.calculateStreaks();
-    const photoGroups = this.groupPhotosByMonth();
     const count = this.photos.length;
     const syncing = Storage.syncState === 'syncing';
     const syncFailed = Storage.syncState === 'error';
 
+    if (this.visibleCount === 0 && count > 0) this.visibleCount = this.pageSize;
+    this.visibleCount = Math.min(this.visibleCount, count);
+
+    const photoGroups = this.groupPhotosByMonth(this.photos.slice(0, this.visibleCount));
+    const syncTotal = Storage.syncTotal;
+    const countLabel = syncing && syncTotal > count
+      ? `${count} of ${syncTotal} photos · syncing…`
+      : `${count} ${count === 1 ? 'photo' : 'photos'}`;
+
     const subtitle = [
-      `${count} ${count === 1 ? 'photo' : 'photos'}`,
+      countLabel,
       currentStreak > 0 ? `${currentStreak}-day streak` : null,
       longestStreak > 1 ? `best ${longestStreak}` : null
     ].filter(Boolean).join(' · ');
@@ -303,7 +316,15 @@ const Gallery = {
     }
 
     if (count === 0) {
-      html += `
+      html += syncing ? `
+        <div class="empty-state">
+          <div class="empty-icon spin">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>
+          </div>
+          <h2>Loading Your Photos</h2>
+          <p>Fetching your journal from Cloudflare R2. The newest photos show up first.</p>
+        </div>
+      ` : `
         <div class="empty-state">
           <div class="empty-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.8l1.5-2h6.4l1.5 2h1.8A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.5"/></svg>
@@ -318,43 +339,149 @@ const Gallery = {
         </div>
       `;
     } else {
-      for (const [monthKey, monthPhotos] of Object.entries(photoGroups)) {
-        html += `
-          <section class="month-section">
-            <h2 class="month-title">${monthKey}</h2>
-            <div class="mosaic-grid">
-        `;
-
-        for (const photo of monthPhotos) {
-          const isSelected = this.selectedPhotoIds.has(photo.id);
-          const date = new Date(photo.date);
-
-          html += `
-            <div class="mosaic-tile ${isSelected ? 'selected' : ''} ${photo.pending ? 'pending' : ''}" data-id="${photo.id}" role="button" tabindex="0">
-              ${this.isPrivacyMode ? `
-                <div class="privacy-placeholder"></div>
-              ` : `
-                <img src="${this.photoUrl(photo)}" alt="Photo ${date.toLocaleDateString()}" loading="lazy" decoding="async">
-              `}
-              <span class="tile-date">${date.getDate()}</span>
-              ${this.isSelectionMode ? `
-                <span class="selection-badge ${isSelected ? 'checked' : ''}">
-                  ${isSelected ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' : ''}
-                </span>
-              ` : ''}
-            </div>
-          `;
-        }
-
-        html += `
-            </div>
-          </section>
-        `;
-      }
+      html += this.monthSectionsHtml(photoGroups);
+      if (this.visibleCount < count) html += this.sentinelHtml();
     }
 
     this.containerElement.innerHTML = html;
     this.attachEvents();
+  },
+
+  monthSectionsHtml(photoGroups) {
+    let html = '';
+    for (const [monthKey, monthPhotos] of Object.entries(photoGroups)) {
+      html += `
+        <section class="month-section" data-month="${monthKey}">
+          <h2 class="month-title">${monthKey}</h2>
+          <div class="mosaic-grid">${monthPhotos.map((photo) => this.tileHtml(photo)).join('')}</div>
+        </section>
+      `;
+    }
+    return html;
+  },
+
+  tileHtml(photo) {
+    const isSelected = this.selectedPhotoIds.has(photo.id);
+    const date = new Date(photo.date);
+
+    const undated = photo.dateSource === 'uploaded';
+
+    return `
+      <div class="mosaic-tile ${isSelected ? 'selected' : ''} ${photo.pending ? 'pending' : ''}" data-id="${photo.id}" role="button" tabindex="0">
+        ${this.isPrivacyMode ? `
+          <div class="privacy-placeholder"></div>
+        ` : `
+          <img src="${this.photoUrl(photo)}" alt="${undated ? 'Photo with unknown date' : `Photo ${date.toLocaleDateString()}`}" loading="lazy" decoding="async">
+        `}
+        <span class="tile-date">${undated ? '?' : date.getDate()}</span>
+        ${this.isSelectionMode ? `
+          <span class="selection-badge ${isSelected ? 'checked' : ''}">
+            ${isSelected ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' : ''}
+          </span>
+        ` : ''}
+      </div>
+    `;
+  },
+
+  sentinelHtml() {
+    return `
+      <div class="gallery-sentinel" id="gallery-sentinel" role="status">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="spin" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>
+        <span>Loading more…</span>
+      </div>
+    `;
+  },
+
+  loadMore() {
+    if (this.visibleCount >= this.photos.length) {
+      this.finishLoading();
+      return;
+    }
+
+    const start = this.visibleCount;
+    this.visibleCount = Math.min(this.photos.length, start + this.pageSize);
+
+    const holder = document.createElement('div');
+    holder.innerHTML = this.monthSectionsHtml(this.groupPhotosByMonth(this.photos.slice(start, this.visibleCount)));
+
+    const sentinel = document.getElementById('gallery-sentinel');
+    const sections = this.containerElement.querySelectorAll('.month-section');
+    const lastSection = sections[sections.length - 1];
+    let firstNew = holder.firstElementChild;
+
+    // Continue the last month instead of repeating its heading.
+    if (firstNew && lastSection && lastSection.dataset.month === firstNew.dataset.month) {
+      const grid = lastSection.querySelector('.mosaic-grid');
+      for (const tile of Array.from(firstNew.querySelector('.mosaic-grid').children)) {
+        this.bindTile(tile);
+        grid.appendChild(tile);
+      }
+      firstNew.remove();
+    }
+
+    while (holder.firstElementChild) {
+      const section = holder.firstElementChild;
+      section.querySelectorAll('.mosaic-tile').forEach((tile) => this.bindTile(tile));
+      if (sentinel) this.containerElement.insertBefore(section, sentinel);
+      else this.containerElement.appendChild(section);
+    }
+
+    if (this.visibleCount >= this.photos.length) {
+      this.finishLoading();
+    } else {
+      // Re-observing reports the sentinel's current position, so a page that
+      // still leaves it on screen fills the viewport before waiting for a scroll.
+      this.observeSentinel();
+    }
+  },
+
+  finishLoading() {
+    if (this.loadObserver) {
+      this.loadObserver.disconnect();
+      this.loadObserver = null;
+    }
+    document.getElementById('gallery-sentinel')?.remove();
+  },
+
+  observeSentinel() {
+    if (this.loadObserver) {
+      this.loadObserver.disconnect();
+      this.loadObserver = null;
+    }
+
+    const sentinel = document.getElementById('gallery-sentinel');
+    if (!sentinel) return;
+
+    if (!('IntersectionObserver' in window)) {
+      this.loadMore();
+      return;
+    }
+
+    this.loadObserver = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) this.loadMore();
+    }, { rootMargin: '800px 0px' });
+    this.loadObserver.observe(sentinel);
+  },
+
+  bindTile(tile) {
+    if (this.boundTiles.has(tile)) return;
+    this.boundTiles.add(tile);
+
+    const id = tile.dataset.id;
+    const activate = () => {
+      if (this.isSelectionMode) {
+        this.toggleSelectPhoto(id);
+      } else {
+        this.openDetailModal(id);
+      }
+    };
+    tile.addEventListener('click', activate);
+    tile.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        activate();
+      }
+    });
   },
 
   attachEvents() {
@@ -388,24 +515,8 @@ const Gallery = {
       deleteSelBtn.addEventListener('click', () => this.deleteSelected());
     }
 
-    const tiles = this.containerElement.querySelectorAll('.mosaic-tile');
-    tiles.forEach(tile => {
-      const id = tile.dataset.id;
-      const activate = () => {
-        if (this.isSelectionMode) {
-          this.toggleSelectPhoto(id);
-        } else {
-          this.openDetailModal(id);
-        }
-      };
-      tile.addEventListener('click', activate);
-      tile.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          activate();
-        }
-      });
-    });
+    this.containerElement.querySelectorAll('.mosaic-tile').forEach((tile) => this.bindTile(tile));
+    this.observeSentinel();
   },
 
   async openDetailModal(photoId) {
@@ -427,14 +538,16 @@ const Gallery = {
     }
 
     const imgUrl = this.photoUrl(photo);
-    const formattedDate = new Date(photo.date).toLocaleDateString(undefined, {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    const formattedDate = photo.dateSource === 'uploaded'
+      ? 'Capture date unknown'
+      : new Date(photo.date).toLocaleDateString(undefined, {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
 
     modal.innerHTML = `
       <div class="photo-detail-content">
@@ -474,14 +587,25 @@ const Gallery = {
       document.getElementById('detail-next-btn').onclick = () => this.openDetailModal(nextPhoto.id);
     }
 
-    document.getElementById('detail-detect-eyes').onclick = async () => {
-      if (window.EyeDetection) {
+    document.getElementById('detail-detect-eyes').onclick = async (event) => {
+      if (!window.EyeDetection) return;
+      const button = event.currentTarget;
+      const label = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Detecting…';
+
+      try {
         const eyes = await EyeDetection.detectEyes(photo.blob);
         if (eyes) {
           alert(`Eyes detected successfully!\nLeft eye: (${Math.round(eyes.leftEye.x)}, ${Math.round(eyes.leftEye.y)})\nRight eye: (${Math.round(eyes.rightEye.x)}, ${Math.round(eyes.rightEye.y)})`);
         } else {
-          alert('No eyes / face landmarks detected in this photo.');
+          alert('No face found in this photo.');
         }
+      } catch (e) {
+        alert(`Eye detection is unavailable: ${e.message}`);
+      } finally {
+        button.disabled = false;
+        button.textContent = label;
       }
     };
 

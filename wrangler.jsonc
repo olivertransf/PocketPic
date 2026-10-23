@@ -11,7 +11,10 @@
   "r2_buckets": [
     {
       "binding": "PHOTOS",
-      "bucket_name": "pocketpic"
+      "bucket_name": "pocketpic",
+      // Use the real bucket during `wrangler dev`, so local development sees the
+      // same photos the deployed site does. Ignored on deploy.
+      "remote": true
     }
   ],
   "observability": {

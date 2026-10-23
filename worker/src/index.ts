@@ -7,6 +7,8 @@ interface PhotoMeta {
   id: string;
   key: string;
   date: string;
+  // Where `date` came from. "uploaded" means no capture date was recoverable.
+  dateSource?: "metadata" | "filename" | "exif" | "index" | "client" | "uploaded";
   mimeType: string;
   width: number | null;
   height: number | null;
@@ -195,6 +197,7 @@ async function putPhoto(request: Request, env: Env, id: string): Promise<Respons
     customMetadata: { capturedAt },
   });
 
+  const dateSource: PhotoMeta["dateSource"] = requestedDate || existingDate ? "client" : exifDate ? "exif" : "uploaded";
   const width = parseDimension(request.headers.get("X-Photo-Width"));
   const height = parseDimension(request.headers.get("X-Photo-Height"));
   let saved: PhotoMeta | null = null;
@@ -207,6 +210,7 @@ async function putPhoto(request: Request, env: Env, id: string): Promise<Respons
       id,
       key,
       date: capturedAt,
+      dateSource,
       mimeType: contentType,
       width,
       height,
@@ -298,17 +302,28 @@ async function scanBucketForPhotos(env: Env, known?: Map<string, PhotoMeta>): Pr
       while (seen.has(id)) id = `${baseId.slice(0, 90)}_${seen.size}`;
       seen.add(id);
 
-      let capturedAt = getCapturedAtMetadata(object.customMetadata) ?? existing?.date ?? dateFromKey(object.key);
+      // Prefer real sources over a cached index date, which may itself be an upload timestamp.
+      let capturedAt = getCapturedAtMetadata(object.customMetadata);
+      let dateSource: PhotoMeta["dateSource"] = capturedAt ? "metadata" : undefined;
+      if (!capturedAt) {
+        capturedAt = dateFromKey(object.key);
+        if (capturedAt) dateSource = "filename";
+      }
       if (!capturedAt) {
         try {
           const header = await env.PHOTOS.get(object.key, { range: { offset: 0, length: 524288 } });
           if (header) {
             const buf = new Uint8Array(await header.arrayBuffer());
             capturedAt = parseExifDate(buf);
+            if (capturedAt) dateSource = "exif";
           }
         } catch {
           // ignore EXIF parse failure
         }
+      }
+      if (!capturedAt && existing?.date && existing.date !== object.uploaded.toISOString()) {
+        capturedAt = existing.date;
+        dateSource = existing.dateSource ?? "index";
       }
       const date = capturedAt ?? object.uploaded.toISOString();
 
@@ -316,6 +331,7 @@ async function scanBucketForPhotos(env: Env, known?: Map<string, PhotoMeta>): Pr
         id,
         key: object.key,
         date,
+        dateSource: dateSource ?? "uploaded",
         mimeType: object.httpMetadata?.contentType ?? mimeType,
         width: existing?.width ?? null,
         height: existing?.height ?? null,

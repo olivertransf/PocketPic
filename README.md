@@ -60,7 +60,7 @@ PocketPic/
 
 ```bash
 npm install
-npm run dev      # local Worker with a simulated R2 bucket
+npm run dev      # local Worker reading the real `pocketpic` R2 bucket (needs `npx wrangler login`)
 npm run deploy   # needs `npx wrangler login` on the account that owns the bucket
 ```
 

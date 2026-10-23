@@ -16,21 +16,28 @@ const Auth = {
 
   async status() {
     const storedHash = localStorage.getItem(this.LOCAL_KEY);
-    const localUnlocked = localStorage.getItem(this.SESSION_KEY) === 'true' || sessionStorage.getItem(this.SESSION_KEY) === 'true';
 
     try {
       const res = await fetch('/api/session', { credentials: 'same-origin', cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
+        // The Worker session is the source of truth. A leftover local flag must not
+        // keep the journal open after the session expired: the API then rejects every
+        // photo request and the library looks empty with no passphrase prompt.
+        if (!data.unlocked) {
+          localStorage.removeItem(this.SESSION_KEY);
+          sessionStorage.removeItem(this.SESSION_KEY);
+        }
         return {
-          unlocked: Boolean(data.unlocked || localUnlocked),
-          passphraseSet: Boolean(data.passphraseSet || storedHash !== null)
+          unlocked: Boolean(data.unlocked),
+          passphraseSet: Boolean(data.passphraseSet ?? storedHash !== null)
         };
       }
     } catch {
       // Backend API not reachable; fall back to local storage auth
     }
 
+    const localUnlocked = localStorage.getItem(this.SESSION_KEY) === 'true' || sessionStorage.getItem(this.SESSION_KEY) === 'true';
     return { unlocked: localUnlocked, passphraseSet: storedHash !== null };
   },
 

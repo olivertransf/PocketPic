@@ -3,6 +3,12 @@
 // Encodes photos into a time-lapse video with optional eye alignment and customizable FPS.
 //
 
+// Bundled locally so exports work offline; falls back to the CDN if the file is missing.
+const MP4_MUXER_URLS = [
+  '../vendor/mp4-muxer.mjs',
+  'https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/+esm'
+];
+
 const Exporter = {
   isExporting: false,
   progressCallback: null,
@@ -44,23 +50,209 @@ const Exporter = {
     canvas.height = videoHeight;
     const ctx = canvas.getContext('2d');
 
-    // 1. Detect eyes on reference photo if alignEyes is enabled
+    // 1. Detect eyes on the reference photo, mapped into video space (same target as the iOS export).
     let refEyes = null;
     if (alignEyes && window.EyeDetection) {
-      reportProgress(0.05, 'Detecting reference eye alignment…');
+      reportProgress(0.04, 'Loading face landmarks…');
       try {
-        refEyes = await EyeDetection.detectEyes(firstImg);
+        await EyeDetection.preload();
+      } catch (e) {
+        console.warn('Face landmark model unavailable:', e);
+      }
+
+      reportProgress(0.06, 'Detecting reference eyes…');
+      try {
+        refEyes = await this.eyesInVideoSpace(firstImg, videoWidth, videoHeight);
+        if (!refEyes) console.warn('No face found in the first photo; frames will not be aligned.');
       } catch (e) {
         console.warn('Reference eye detection failed:', e);
       }
     }
 
-    // Prepare MediaRecorder on canvas stream
+    const total = sortedPhotos.length;
+
+    // Draws one photo onto the shared canvas (aspect fit, or eyes aligned to the reference frame).
+    const drawFrame = async (photo) => {
+      const img = await EyeDetection.loadImage(photo.blob);
+      if (!img) return false;
+
+      ctx.save();
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, videoWidth, videoHeight);
+
+      if (alignEyes && refEyes) {
+        let aligned = false;
+        try {
+          const frameEyes = await this.eyesInVideoSpace(img, videoWidth, videoHeight);
+          if (frameEyes) aligned = this.drawAlignedFrame(ctx, img, frameEyes, refEyes, videoWidth, videoHeight);
+        } catch (e) {
+          aligned = false;
+        }
+
+        if (!aligned) this.drawAspectFitFrame(ctx, img, videoWidth, videoHeight);
+      } else {
+        this.drawAspectFitFrame(ctx, img, videoWidth, videoHeight);
+      }
+
+      ctx.restore();
+      return true;
+    };
+
+    // 2. Prefer exact-timestamp encoding (WebCodecs + MP4) so every frame has a fixed duration.
+    let mp4Muxer = null;
+    let h264Codec = null;
+    try {
+      h264Codec = await this.pickH264Codec(videoWidth, videoHeight, fps);
+      if (h264Codec) {
+        mp4Muxer = await this.loadMp4Muxer();
+      }
+    } catch (e) {
+      console.warn('WebCodecs encoding unavailable, falling back to MediaRecorder:', e);
+      mp4Muxer = null;
+    }
+
+    if (h264Codec && mp4Muxer) {
+      try {
+        const videoBlob = await this.encodeWithWebCodecs({
+          mp4Muxer,
+          codec: h264Codec,
+          photos: sortedPhotos,
+          fps,
+          videoWidth,
+          videoHeight,
+          canvas,
+          drawFrame,
+          total,
+          reportProgress
+        });
+
+        this.isExporting = false;
+        reportProgress(1.0, 'Export complete!');
+
+        return {
+          blob: videoBlob,
+          mimeType: 'video/mp4',
+          url: URL.createObjectURL(videoBlob),
+          filename: `PocketPic_TimeLapse_${Date.now()}.mp4`
+        };
+      } catch (e) {
+        console.warn('WebCodecs export failed, falling back to MediaRecorder:', e);
+      }
+    }
+
+    // 3. Fallback: capture the canvas in real time with MediaRecorder (variable frame timing).
+    return this.encodeWithMediaRecorder({ canvas, photos: sortedPhotos, fps, drawFrame, total, reportProgress });
+  },
+
+  async loadMp4Muxer() {
+    let lastError = null;
+    for (const url of MP4_MUXER_URLS) {
+      try {
+        const mod = await import(url);
+        if (mod && mod.Muxer) return mod;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError || new Error('MP4 muxer unavailable');
+  },
+
+  // First H.264 codec string this browser can actually encode at this resolution.
+  async pickH264Codec(width, height, fps) {
+    if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') return null;
+
+    const candidates = ['avc1.4d0028', 'avc1.640028', 'avc1.4d401f', 'avc1.42E01E', 'avc1.42001f'];
+    for (const codec of candidates) {
+      try {
+        const { supported } = await VideoEncoder.isConfigSupported({
+          codec,
+          width,
+          height,
+          bitrate: 8000000,
+          framerate: fps
+        });
+        if (supported) return codec;
+      } catch (e) {
+        // Unsupported codec strings throw in some browsers; keep trying.
+      }
+    }
+    return null;
+  },
+
+  // Encodes each canvas frame with an exact presentation timestamp (frame i at i / fps).
+  async encodeWithWebCodecs({ mp4Muxer, codec, photos, fps, videoWidth, videoHeight, canvas, drawFrame, total, reportProgress }) {
+    const { Muxer, ArrayBufferTarget } = mp4Muxer;
+
+    const muxer = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: { codec: 'avc', width: videoWidth, height: videoHeight },
+      fastStart: 'in-memory'
+    });
+
+    let encoderError = null;
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (e) => {
+        encoderError = e;
+      }
+    });
+
+    encoder.configure({
+      codec,
+      width: videoWidth,
+      height: videoHeight,
+      bitrate: 8000000,
+      framerate: fps,
+      latencyMode: 'quality'
+    });
+
+    const frameDurationUs = Math.round(1000000 / fps);
+    // Derive each timestamp from the frame index so rounding cannot drift over long exports.
+    const timestampForFrame = (index) => Math.round((index * 1000000) / fps);
+    const keyFrameInterval = Math.max(1, Math.round(fps * 2));
+
+    try {
+      for (let i = 0; i < total; i++) {
+        if (encoderError) throw encoderError;
+
+        const progress = 0.10 + (i / total) * 0.85;
+        reportProgress(progress, `Processing frame ${i + 1} of ${total}…`);
+
+        await drawFrame(photos[i]);
+
+        const frame = new VideoFrame(canvas, {
+          timestamp: timestampForFrame(i),
+          duration: frameDurationUs
+        });
+        encoder.encode(frame, { keyFrame: i % keyFrameInterval === 0 });
+        frame.close();
+
+        // Let the encoder drain instead of queueing the whole video in memory.
+        while (encoder.encodeQueueSize > 4) {
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      }
+
+      reportProgress(0.96, 'Finalizing video encoding…');
+      await encoder.flush();
+      if (encoderError) throw encoderError;
+
+      muxer.finalize();
+      return new Blob([muxer.target.buffer], { type: 'video/mp4' });
+    } finally {
+      try {
+        encoder.close();
+      } catch (e) {
+        // Already closed by an error.
+      }
+    }
+  },
+
+  // Real-time canvas capture; used only when this browser cannot encode H.264 with WebCodecs.
+  async encodeWithMediaRecorder({ canvas, photos, fps, drawFrame, total, reportProgress }) {
     const stream = canvas.captureStream(fps);
-    let recorder;
     const chunks = [];
 
-    // Select supported video mimeType
     const mimeTypes = [
       'video/mp4;codecs=h264',
       'video/mp4',
@@ -70,6 +262,7 @@ const Exporter = {
     ];
     let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(type)) || 'video/webm';
 
+    let recorder;
     try {
       recorder = new MediaRecorder(stream, {
         mimeType: selectedMime,
@@ -87,47 +280,19 @@ const Exporter = {
 
     const recordPromise = new Promise((resolve) => {
       recorder.onstop = () => {
-        const videoBlob = new Blob(chunks, { type: selectedMime });
-        resolve(videoBlob);
+        resolve(new Blob(chunks, { type: selectedMime }));
       };
     });
 
     recorder.start();
 
-    // 2. Render each photo frame to canvas
-    const total = sortedPhotos.length;
     const frameDurationMs = 1000 / fps;
 
     for (let i = 0; i < total; i++) {
       const progress = 0.10 + (i / total) * 0.85;
       reportProgress(progress, `Processing frame ${i + 1} of ${total}…`);
 
-      const photo = sortedPhotos[i];
-      const img = await EyeDetection.loadImage(photo.blob);
-
-      ctx.save();
-      ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, videoWidth, videoHeight);
-
-      if (alignEyes && refEyes) {
-        // Detect eyes for current frame
-        let currentEyes = null;
-        try {
-          currentEyes = await EyeDetection.detectEyes(img);
-        } catch (e) {
-          currentEyes = null;
-        }
-
-        if (currentEyes) {
-          this.drawAlignedFrame(ctx, img, currentEyes, refEyes, videoWidth, videoHeight);
-        } else {
-          this.drawAspectFitFrame(ctx, img, videoWidth, videoHeight);
-        }
-      } else {
-        this.drawAspectFitFrame(ctx, img, videoWidth, videoHeight);
-      }
-
-      ctx.restore();
+      await drawFrame(photos[i]);
 
       // Wait frame duration for MediaRecorder to encode frame
       await new Promise(r => setTimeout(r, frameDurationMs));
@@ -148,56 +313,72 @@ const Exporter = {
     };
   },
 
+  aspectFitRect(imageWidth, imageHeight, targetW, targetH) {
+    const scale = Math.min(targetW / imageWidth, targetH / imageHeight);
+    const width = imageWidth * scale;
+    const height = imageHeight * scale;
+    return { x: (targetW - width) / 2, y: (targetH - height) / 2, width, height };
+  },
+
   drawAspectFitFrame(ctx, img, targetW, targetH) {
     const imgW = img.naturalWidth || img.width;
     const imgH = img.naturalHeight || img.height;
-
-    const scale = Math.min(targetW / imgW, targetH / imgH);
-    const drawW = imgW * scale;
-    const drawH = imgH * scale;
-    const x = (targetW - drawW) / 2;
-    const y = (targetH - drawH) / 2;
-
-    ctx.drawImage(img, x, y, drawW, drawH);
+    const fit = this.aspectFitRect(imgW, imgH, targetW, targetH);
+    ctx.drawImage(img, fit.x, fit.y, fit.width, fit.height);
   },
 
+  // Eye positions for a frame, expressed in video-canvas pixels.
+  async eyesInVideoSpace(img, targetW, targetH) {
+    const eyes = await EyeDetection.detectEyes(img);
+    if (!eyes) return null;
+
+    const { width, height } = eyes.imageSize;
+    const fit = this.aspectFitRect(width, height, targetW, targetH);
+    const toVideo = (point) => ({
+      x: fit.x + (point.x / width) * fit.width,
+      y: fit.y + (point.y / height) * fit.height
+    });
+
+    return { left: toVideo(eyes.leftEye), right: toVideo(eyes.rightEye) };
+  },
+
+  // Draws the frame so its eyes land on the reference eyes, matching the iOS similarity transform.
   drawAlignedFrame(ctx, img, currentEyes, refEyes, targetW, targetH) {
     const imgW = img.naturalWidth || img.width;
     const imgH = img.naturalHeight || img.height;
+    const fit = this.aspectFitRect(imgW, imgH, targetW, targetH);
 
-    // First scale refEyes to target canvas space if needed
-    const fitScale = Math.min(targetW / imgW, targetH / imgH);
-    const fitX = (targetW - imgW * fitScale) / 2;
-    const fitY = (targetH - imgH * fitScale) / 2;
+    let srcLeft = currentEyes.left;
+    let srcRight = currentEyes.right;
+    const dstDx = refEyes.right.x - refEyes.left.x;
+    const dstDy = refEyes.right.y - refEyes.left.y;
 
-    const dstLeft = { x: refEyes.leftEye.x * fitScale + fitX, y: refEyes.leftEye.y * fitScale + fitY };
-    const dstRight = { x: refEyes.rightEye.x * fitScale + fitX, y: refEyes.rightEye.y * fitScale + fitY };
-
-    const srcLeft = currentEyes.leftEye;
-    const srcRight = currentEyes.rightEye;
-
-    const srcDx = srcRight.x - srcLeft.x;
-    const srcDy = srcRight.y - srcLeft.y;
-    const srcDist = Math.hypot(srcDx, srcDy);
-
-    const dstDx = dstRight.x - dstLeft.x;
-    const dstDy = dstRight.y - dstLeft.y;
-    const dstDist = Math.hypot(dstDx, dstDy);
-
-    if (srcDist < 5 || dstDist < 5) {
-      this.drawAspectFitFrame(ctx, img, targetW, targetH);
-      return;
+    // A mirrored frame would otherwise be rotated 180°; swap the eye pair instead.
+    if ((srcRight.x - srcLeft.x) * dstDx + (srcRight.y - srcLeft.y) * dstDy < 0) {
+      [srcLeft, srcRight] = [srcRight, srcLeft];
     }
 
-    const scale = dstDist / srcDist;
-    const angle = Math.atan2(dstDy, dstDx) - Math.atan2(srcDy, srcDx);
+    const srcDist = Math.hypot(srcRight.x - srcLeft.x, srcRight.y - srcLeft.y);
+    const dstDist = Math.hypot(dstDx, dstDy);
+    if (srcDist < 0.1 || dstDist < 0.1) return false;
 
-    ctx.translate(dstLeft.x, dstLeft.y);
-    ctx.rotate(angle);
+    let theta = Math.atan2(dstDy, dstDx) - Math.atan2(srcRight.y - srcLeft.y, srcRight.x - srcLeft.x);
+    while (theta > Math.PI) theta -= 2 * Math.PI;
+    while (theta < -Math.PI) theta += 2 * Math.PI;
+    const scale = dstDist / srcDist;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, targetW, targetH);
+    ctx.clip();
+    ctx.translate(refEyes.left.x, refEyes.left.y);
+    ctx.rotate(theta);
     ctx.scale(scale, scale);
     ctx.translate(-srcLeft.x, -srcLeft.y);
+    ctx.drawImage(img, fit.x, fit.y, fit.width, fit.height);
+    ctx.restore();
 
-    ctx.drawImage(img, 0, 0);
+    return true;
   }
 };
 

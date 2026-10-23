@@ -558,6 +558,22 @@ body.locked .lock-btn {
   align-items: center;
 }
 
+.gallery-sentinel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px 0 32px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--label-tertiary);
+}
+
+.gallery-sentinel svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* Camera */
 
 .camera-container {
