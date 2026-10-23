@@ -24,6 +24,9 @@ const AUTH_KEY = "auth/passphrase.json";
 const SESSION_COOKIE = "pp_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 const MAX_UPLOAD_BYTES = 40 * 1024 * 1024;
+// How long a bucket listing is trusted before the photo index is reconciled with R2 again.
+// Keeps objects added outside the app (dashboard, CLI, other tools) showing up without a list on every sync.
+const INDEX_RECONCILE_MS = 2 * 60 * 1000;
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
 const IMAGE_EXTENSIONS: Record<string, string> = {
   jpg: "image/jpeg",
@@ -80,20 +83,13 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   if (path === "/api/photos" && method === "GET") {
-    let { photos, etag } = await readIndex(env);
-    if (url.searchParams.has("rebuild")) {
-      photos = await scanBucketForPhotos(env);
-      await env.PHOTOS.put(INDEX_KEY, JSON.stringify(photos), {
-        httpMetadata: { contentType: "application/json" },
-      });
-      return json({ photos: sortNewestFirst(photos) });
-    }
-    if (!etag) {
-      await env.PHOTOS.put(INDEX_KEY, JSON.stringify(photos), {
-        httpMetadata: { contentType: "application/json" },
-      });
-    }
-    return json({ photos: sortNewestFirst(photos) });
+    const rebuild = url.searchParams.has("rebuild");
+    const { photos, reconciledAt } = await readIndex(env);
+    const lastReconciled = reconciledAt ? Date.parse(reconciledAt) : Number.NaN;
+    const stale = rebuild || !Number.isFinite(lastReconciled) || Date.now() - lastReconciled > INDEX_RECONCILE_MS;
+    // The R2 bucket is the source of truth: photos uploaded outside the app still load here.
+    const list = stale ? await reconcileIndexWithBucket(env) : photos;
+    return json({ photos: sortNewestFirst(list) });
   }
 
   if (path === "/api/photos/delete" && method === "POST") {
@@ -236,11 +232,39 @@ async function deletePhotos(env: Env, ids: string[]): Promise<void> {
   }
 }
 
-async function readIndex(env: Env): Promise<{ photos: PhotoMeta[]; etag: string | null }> {
+async function readIndex(env: Env): Promise<{ photos: PhotoMeta[]; etag: string | null; reconciledAt: string | null }> {
   const object = await env.PHOTOS.get(INDEX_KEY);
-  if (!object) return { photos: await scanBucketForPhotos(env), etag: null };
+  if (!object) return { photos: await scanBucketForPhotos(env), etag: null, reconciledAt: null };
   const photos = await object.json<PhotoMeta[]>();
-  return { photos: Array.isArray(photos) ? photos : [], etag: object.etag };
+  return {
+    photos: Array.isArray(photos) ? photos : [],
+    etag: object.etag,
+    reconciledAt: object.customMetadata?.reconciledAt ?? null,
+  };
+}
+
+// Rebuilds the index from what is actually in the bucket, so photos added outside
+// the app (dashboard uploads, CLI, migrations) load in the web app.
+async function reconcileIndexWithBucket(env: Env): Promise<PhotoMeta[]> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const object = await env.PHOTOS.get(INDEX_KEY);
+    let indexed: PhotoMeta[] = [];
+    if (object) {
+      const parsed = await object.json<PhotoMeta[]>();
+      indexed = Array.isArray(parsed) ? parsed : [];
+    }
+
+    const scanned = await scanBucketForPhotos(env, new Map(indexed.map((photo) => [photo.key, photo])));
+    const written = await env.PHOTOS.put(INDEX_KEY, JSON.stringify(scanned), {
+      httpMetadata: { contentType: "application/json" },
+      customMetadata: { reconciledAt: new Date().toISOString() },
+      ...(object ? { onlyIf: { etagMatches: object.etag } } : {}),
+    });
+    if (written || !object) return scanned;
+  }
+
+  const { photos } = await readIndex(env);
+  return photos;
 }
 
 async function mutateIndex(env: Env, change: (photos: PhotoMeta[]) => PhotoMeta[]): Promise<void> {
@@ -256,7 +280,7 @@ async function mutateIndex(env: Env, change: (photos: PhotoMeta[]) => PhotoMeta[
   throw new Error("Photo index is busy, try again");
 }
 
-async function scanBucketForPhotos(env: Env): Promise<PhotoMeta[]> {
+async function scanBucketForPhotos(env: Env, known?: Map<string, PhotoMeta>): Promise<PhotoMeta[]> {
   const photos: PhotoMeta[] = [];
   const seen = new Set<string>();
   let cursor: string | undefined;
@@ -268,12 +292,13 @@ async function scanBucketForPhotos(env: Env): Promise<PhotoMeta[]> {
       const mimeType = IMAGE_EXTENSIONS[extension];
       if (!mimeType) continue;
 
+      const existing = known?.get(object.key);
       const baseId = object.key.replace(/^photos\//, "").replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100);
-      let id = baseId || crypto.randomUUID();
+      let id = existing?.id ?? baseId ?? crypto.randomUUID();
       while (seen.has(id)) id = `${baseId.slice(0, 90)}_${seen.size}`;
       seen.add(id);
 
-      let capturedAt = getCapturedAtMetadata(object.customMetadata) ?? dateFromKey(object.key);
+      let capturedAt = getCapturedAtMetadata(object.customMetadata) ?? existing?.date ?? dateFromKey(object.key);
       if (!capturedAt) {
         try {
           const header = await env.PHOTOS.get(object.key, { range: { offset: 0, length: 524288 } });
@@ -292,10 +317,10 @@ async function scanBucketForPhotos(env: Env): Promise<PhotoMeta[]> {
         key: object.key,
         date,
         mimeType: object.httpMetadata?.contentType ?? mimeType,
-        width: null,
-        height: null,
+        width: existing?.width ?? null,
+        height: existing?.height ?? null,
         size: object.size,
-        updatedAt: object.uploaded.toISOString(),
+        updatedAt: existing?.updatedAt ?? object.uploaded.toISOString(),
       });
     }
     cursor = listed.truncated ? listed.cursor : undefined;

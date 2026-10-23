@@ -291,7 +291,7 @@ const App = {
     const r2UrlInput = document.getElementById('settings-r2-url-input');
     const saveR2UrlBtn = document.getElementById('settings-save-r2-url');
     if (r2UrlInput && saveR2UrlBtn) {
-      Storage.getR2Url().then((url) => { r2UrlInput.value = url; });
+      Storage.getR2Url().then((url) => { r2UrlInput.value = url || ''; });
       saveR2UrlBtn.addEventListener('click', async () => {
         const val = r2UrlInput.value.trim();
         await Storage.setSetting('r2Url', val || null);

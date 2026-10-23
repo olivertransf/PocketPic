@@ -146,11 +146,11 @@
               <button class="btn btn-plain" id="settings-sync-now">Sync Now</button>
             </div>
             <div class="list-row">
-              <input type="url" class="row-input" id="settings-r2-url-input" placeholder="Cloudflare R2 Bucket URL" aria-label="Cloudflare R2 Bucket URL">
+              <input type="url" class="row-input" id="settings-r2-url-input" placeholder="Optional public bucket URL" aria-label="Optional public bucket URL">
               <button class="btn btn-plain" id="settings-save-r2-url">Save URL</button>
             </div>
           </div>
-          <div class="list-footer">Photos store directly in Cloudflare R2 or local IndexedDB without external server dependency.</div>
+          <div class="list-footer">Photos load from the Cloudflare R2 bucket attached to this app and are cached on this device. A public bucket URL is only needed for read-only backup access.</div>
         </div>
 
         <div class="list-section">
@@ -197,9 +197,6 @@
     </div>
   </div>
 
-  <script>
-    window.POCKETPIC_R2_URL = "https://c4082e46de92362b88f334060c85e78d.r2.cloudflarestorage.com/pocketpic";
-  </script>
   <script src="js/auth.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/camera.js"></script>
