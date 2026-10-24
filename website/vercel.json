@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://pocketpic.olivertransf.workers.dev/api/:path*"
+    }
+  ]
+}
