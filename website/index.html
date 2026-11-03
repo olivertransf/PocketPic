@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="description" content="PocketPic Web — Daily photo journal with ghost alignment overlay, Cloudflare R2 storage, and time-lapse video export.">
+  <meta name="description" content="PocketPic Web — Your daily photo journal. Keep your framing consistent and watch your story unfold.">
   <meta name="robots" content="noindex, nofollow">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
@@ -16,14 +16,16 @@
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body class="locked" data-tab="library">
+  <a class="skip-link" href="#main-content">Skip to content</a>
 
   <header class="app-header">
     <div class="header-container">
       <a href="#" class="brand">
         <img src="images/app-icon.png" alt="" class="brand-icon">
-        <span>PocketPic</span>
+        <span>PocketPic<small>One day at a time.</small></span>
       </a>
 
+      <p class="sidebar-label">YOUR JOURNAL</p>
       <nav class="nav-tabs" aria-label="Main Navigation">
         <button class="nav-btn active" data-tab="library">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="9" cy="9" r="1.6"/><path d="M21 15l-4.5-4.5L7 20"/></svg>
@@ -43,20 +45,23 @@
         </button>
       </nav>
 
+      <div class="sidebar-footer"><a href="PocketPic.app.zip" download>Get PocketPic for Mac ↗</a><div><a href="support.html">Support</a><span>·</span><a href="privacy.html">Privacy</a></div></div>
       <button class="icon-btn lock-btn" id="header-lock-btn" title="Lock" aria-label="Lock">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
       </button>
     </div>
   </header>
 
-  <main class="app-main">
+  <main class="app-main" id="main-content" tabindex="-1">
 
     <section id="tab-library" class="tab-pane active">
       <div id="gallery-container"></div>
     </section>
 
     <section id="tab-camera" class="tab-pane">
+      <div class="page-header"><div><p class="eyebrow">A LITTLE EVERY DAY</p><h1 class="page-title">Today’s photo</h1><p class="page-subtitle">Same place. Same framing. A new day.</p></div><button class="btn btn-secondary" id="camera-back-btn">Back to Library</button></div>
       <div class="camera-container">
+        <p id="camera-status" class="camera-status" role="status" hidden></p>
         <div class="viewfinder-wrapper">
           <video id="viewfinder-video" class="viewfinder-video" autoplay playsinline muted></video>
           <canvas id="overlay-canvas" class="overlay-canvas"></canvas>
@@ -64,7 +69,7 @@
         </div>
 
         <div class="opacity-slider-box">
-          <span class="slider-label">Ghost</span>
+          <span class="slider-label">Ghost overlay</span>
           <input type="range" id="camera-opacity-range" min="0.1" max="1.0" step="0.05" value="0.4" aria-label="Ghost overlay opacity">
         </div>
 
@@ -72,7 +77,7 @@
           <button class="icon-btn camera-tool-btn" id="camera-switch-btn" title="Switch camera" aria-label="Switch camera">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>
           </button>
-          <button class="shutter-btn" id="camera-shutter-btn" title="Take photo" aria-label="Take photo">
+          <button class="shutter-btn" id="camera-shutter-btn" disabled title="Take photo" aria-label="Take photo">
             <span class="shutter-inner"></span>
           </button>
           <button class="icon-btn camera-tool-btn" id="camera-overlay-btn" title="Show or hide ghost" aria-label="Show or hide ghost">
@@ -86,11 +91,12 @@
       <div class="page narrow">
         <div class="page-header">
           <div>
-            <h1 class="page-title">Export</h1>
-            <p class="page-subtitle">Turn your series into a time-lapse.</p>
+            <p class="eyebrow">SEE THE BIG PICTURE</p><h1 class="page-title">Your days, in motion.</h1>
+            <p class="page-subtitle">Turn the little changes into a time-lapse worth keeping.</p>
           </div>
         </div>
 
+        <div class="export-summary" id="export-summary" role="status">Your photo series, brought together.</div>
         <div class="list-section">
           <div class="list-header">Frame rate</div>
           <div class="segmented fps-options" role="group" aria-label="Frame rate">
@@ -131,7 +137,7 @@
       <div class="page narrow">
         <div class="page-header">
           <div>
-            <h1 class="page-title">Settings</h1>
+            <p class="eyebrow">MAKE IT YOURS</p><h1 class="page-title">Settings</h1><p class="page-subtitle">A few little things, just how you like them.</p>
           </div>
         </div>
 
@@ -175,7 +181,7 @@
           <div class="list-header">Passphrase</div>
           <div class="list-group">
             <div class="list-row">
-              <input type="password" class="row-input" id="settings-passphrase-input" placeholder="New passphrase" autocomplete="new-password">
+              <input type="password" class="row-input" id="settings-passphrase-input" aria-label="New passphrase" placeholder="New passphrase" autocomplete="new-password">
               <button class="btn btn-plain" id="settings-save-passphrase">Change</button>
             </div>
           </div>
@@ -187,14 +193,18 @@
   </main>
 
   <div class="modal-overlay lock-overlay active" id="passphrase-lock-overlay">
-    <div class="lock-screen-box">
+    <form class="lock-screen-box" id="unlock-form">
+      <p class="eyebrow">YOUR DAILY PHOTO JOURNAL</p>
       <img src="images/app-icon.png" alt="" class="lock-icon">
-      <h1 class="lock-title">PocketPic</h1>
+      <h1 class="lock-title">A little change.<br>A bigger story.</h1>
+      <p class="lock-intro">One photo a day. A life in the making.</p>
       <p id="unlock-passphrase-desc" class="muted">Enter your passphrase to open your journal.</p>
-      <input type="password" id="unlock-passphrase-input" class="passphrase-input" placeholder="Passphrase" autocomplete="current-password" autofocus>
-      <div id="unlock-passphrase-error" class="error-text" style="display: none;"></div>
-      <button class="btn btn-primary btn-large" id="unlock-passphrase-btn">Unlock Journal</button>
-    </div>
+      <input type="password" id="unlock-passphrase-input" aria-label="Journal passphrase" class="passphrase-input" placeholder="Passphrase" autocomplete="current-password" autofocus>
+      <div role="alert" id="unlock-passphrase-error" class="error-text" style="display: none;"></div>
+      <button class="btn btn-primary btn-large" id="unlock-passphrase-btn" type="submit">Unlock Journal</button>
+      <p class="lock-note">Your journal. Your passphrase. Just for you.</p>
+      <div class="lock-links"><a href="support.html">Need a hand?</a><a href="privacy.html">Privacy</a></div>
+    </form>
   </div>
 
   <script src="js/auth.js"></script>

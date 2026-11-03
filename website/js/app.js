@@ -46,6 +46,7 @@ const App = {
 
   showLock(passphraseSet = true, errorMessage = '') {
     this.isUnlocked = false;
+    Gallery.closeDetailModal();
     this.stopSyncTimer();
     Camera.stopSession();
     document.body.classList.add('locked');
@@ -96,23 +97,30 @@ const App = {
     if (!unlockBtn || !inputEl) return;
 
     const attemptUnlock = async () => {
+      if (unlockBtn.disabled) return;
       unlockBtn.disabled = true;
-      const result = await Auth.unlock(inputEl.value);
-      unlockBtn.disabled = false;
-
-      if (result.ok) {
-        inputEl.value = '';
-        if (errorEl) errorEl.style.display = 'none';
-        await this.onUnlocked();
-      } else if (errorEl) {
-        errorEl.textContent = result.error;
+      try {
+        const result = await Auth.unlock(inputEl.value);
+        if (result.ok) {
+          inputEl.value = '';
+          if (errorEl) errorEl.style.display = 'none';
+          await this.onUnlocked();
+          document.querySelector('.nav-btn.active')?.focus();
+        } else if (errorEl) {
+          errorEl.textContent = result.error;
+          errorEl.style.display = 'block';
+        }
+      } catch (error) {
+        errorEl.textContent = 'Could not open your journal. Please try again.';
         errorEl.style.display = 'block';
+      } finally {
+        unlockBtn.disabled = false;
       }
     };
 
-    unlockBtn.addEventListener('click', attemptUnlock);
-    inputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') attemptUnlock();
+    document.getElementById('unlock-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      attemptUnlock();
     });
   },
 
@@ -173,6 +181,7 @@ const App = {
 
   setupTabNavigation() {
     document.querySelectorAll('.nav-btn').forEach(btn => {
+      if (btn.classList.contains('active')) btn.setAttribute('aria-current', 'page');
       btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
     });
 
@@ -183,10 +192,13 @@ const App = {
   },
 
   async switchTab(tabName) {
+    if (!['library', 'camera', 'export', 'settings'].includes(tabName)) return;
     this.currentTab = tabName;
 
     document.querySelectorAll('.nav-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.tab === tabName);
+      if (btn.dataset.tab === tabName) btn.setAttribute('aria-current', 'page');
+      else btn.removeAttribute('aria-current');
     });
     document.querySelectorAll('.tab-pane').forEach(pane => {
       pane.classList.toggle('active', pane.id === `tab-${tabName}`);
@@ -195,9 +207,21 @@ const App = {
 
     if (tabName === 'camera' && this.isUnlocked) {
       const started = await Camera.startSession();
-      if (!started) alert('Could not access the camera. Allow camera access for this site in your browser settings.');
+      if (this.currentTab !== 'camera' || !this.isUnlocked) { Camera.stopSession(); return; }
+      document.getElementById('camera-shutter-btn').disabled = !started;
+      const status = document.getElementById('camera-status');
+      status.hidden = started;
+      status.textContent = 'Camera unavailable. Allow camera access in your browser settings, then open Camera again. You can also import photos from your Library.';
     } else {
       Camera.stopSession();
+    }
+
+    if (tabName === 'export') {
+      const photos = await Storage.getAllPhotos();
+      document.getElementById('export-summary').textContent = photos.length
+        ? `${photos.length} photos · ${(photos.length / this.selectedFPS).toFixed(1)} seconds at ${this.selectedFPS} fps`
+        : 'Your time-lapse starts with a photo. Take or import photos in your Library first.';
+      document.getElementById('start-export-btn').disabled = photos.length === 0 || Exporter.isExporting;
     }
 
     if (tabName === 'library' && this.galleryReady) {
@@ -206,6 +230,7 @@ const App = {
   },
 
   bindCameraControls() {
+    document.getElementById('camera-back-btn')?.addEventListener('click', () => this.switchTab('library'));
     const shutterBtn = document.getElementById('camera-shutter-btn');
     if (shutterBtn) {
       shutterBtn.addEventListener('click', async () => {
@@ -221,6 +246,8 @@ const App = {
         shutterBtn.disabled = true;
         try {
           await Storage.savePhoto(frameCanvas);
+          await Camera.updateGhostOverlay();
+          await this.switchTab('library');
         } catch (e) {
           alert(`Could not save photo: ${e.message}`);
         } finally {
@@ -308,12 +335,17 @@ const App = {
 
   bindExport() {
     let selectedFPS = 10;
+    this.selectedFPS = selectedFPS;
     const fpsButtons = document.querySelectorAll('.fps-btn');
     fpsButtons.forEach(btn => {
+      btn.setAttribute('aria-pressed', String(btn.classList.contains('active')));
       btn.addEventListener('click', () => {
-        fpsButtons.forEach(b => b.classList.remove('active'));
+        fpsButtons.forEach(b => { b.classList.remove('active'); b.setAttribute('aria-pressed', 'false'); });
+        btn.setAttribute('aria-pressed', 'true');
         btn.classList.add('active');
         selectedFPS = parseInt(btn.dataset.fps, 10);
+        this.selectedFPS = selectedFPS;
+        this.switchTab('export');
       });
     });
 
@@ -352,6 +384,8 @@ const App = {
           });
 
           if (resultBox && downloadBtn && videoPreview) {
+            if (this.exportObjectUrl) URL.revokeObjectURL(this.exportObjectUrl);
+            this.exportObjectUrl = exportResult.url;
             videoPreview.src = exportResult.url;
             downloadBtn.href = exportResult.url;
             downloadBtn.download = exportResult.filename;

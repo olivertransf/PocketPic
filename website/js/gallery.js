@@ -279,11 +279,12 @@ const Gallery = {
     let html = `
       <div class="page-header">
         <div>
-          <h1 class="page-title">Library</h1>
+          <p class="eyebrow">ONE DAY AT A TIME</p><h1 class="page-title">Library</h1>
           <p class="page-subtitle">${subtitle}${syncFailed ? ' · <span class="sync-error">Sync failed</span>' : ''}</p>
         </div>
         <div class="toolbar">
-          <label class="btn btn-pill" for="gallery-import-input" title="Import photos with preserved capture dates">Import</label>
+          <button class="btn btn-primary" id="gallery-camera">＋ Take photo</button>
+          <button class="btn btn-pill" id="gallery-import-btn" title="Import photos with preserved capture dates">Import</button>
           <input type="file" id="gallery-import-input" accept="image/*" multiple hidden>
           <button class="icon-btn ${syncFailed ? 'sync-error' : ''}" id="gallery-sync" title="${Storage.syncMessage || this.syncLabel()}" aria-label="${this.syncLabel()}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="${syncing ? 'spin' : ''}"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>
@@ -301,6 +302,12 @@ const Gallery = {
         </div>
       </div>
     `;
+
+    html += `<div class="journal-stats" aria-label="Journal statistics">
+      <div class="journal-stat"><strong>${count}</strong><span>Photos collected</span></div>
+      <div class="journal-stat"><strong>${currentStreak}<small> days</small></strong><span>Current streak</span></div>
+      <div class="journal-stat"><strong>${longestStreak}<small> days</small></strong><span>Longest streak</span></div>
+    </div><div class="library-caption"><span>Your story, day by day.</span><span>Newest first</span></div>`;
 
     if (this.isSelectionMode) {
       const selected = this.selectedPhotoIds.size;
@@ -329,11 +336,11 @@ const Gallery = {
           <div class="empty-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.8l1.5-2h6.4l1.5 2h1.8A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="12" cy="13" r="3.5"/></svg>
           </div>
-          <h2>No Photos Yet</h2>
-          <p>Take today’s photo or import existing photos. Photos from your other devices appear here after they sync.</p>
+          <h2>Your story starts today.</h2>
+          <p>Take your first photo. Come back tomorrow. Watch the little changes become something bigger.</p>
           <div class="empty-actions">
             <button class="btn btn-primary" onclick="App.switchTab('camera')">Open Camera</button>
-            <label class="btn btn-secondary" for="gallery-import-input">Import Photos</label>
+            <button class="btn btn-secondary" onclick="document.getElementById('gallery-import-input').click()">Import Photos</button>
             <button class="btn btn-plain" onclick="Gallery.syncNow()">Sync Now</button>
           </div>
         </div>
@@ -485,6 +492,8 @@ const Gallery = {
   },
 
   attachEvents() {
+    document.getElementById('gallery-camera')?.addEventListener('click', () => App.switchTab('camera'));
+    document.getElementById('gallery-import-btn')?.addEventListener('click', () => document.getElementById('gallery-import-input').click());
     const importInput = document.getElementById('gallery-import-input');
     if (importInput) {
       importInput.addEventListener('change', (e) => this.importPhotos(e.target.files));
@@ -573,7 +582,14 @@ const Gallery = {
       </div>
     `;
 
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Photo details');
+    this.detailReturnFocus = document.activeElement;
     modal.classList.add('active');
+    document.getElementById('main-content').inert = true;
+    document.querySelector('.app-header').inert = true;
+    document.getElementById('detail-close').focus();
 
     document.getElementById('detail-close').onclick = () => this.closeDetailModal();
     document.getElementById('detail-delete').onclick = () => this.deleteSinglePhoto(photo.id);
@@ -618,6 +634,9 @@ const Gallery = {
     const modal = document.getElementById('photo-detail-modal');
     if (modal) {
       modal.classList.remove('active');
+      document.getElementById('main-content').inert = false;
+      document.querySelector('.app-header').inert = false;
+      this.detailReturnFocus?.focus();
     }
   }
 };
