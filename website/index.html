@@ -11,7 +11,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>PocketPic</title>
-  <link rel="icon" href="images/favicon.png" type="image/png">
+  <link rel="icon" href="images/favicon.png" type="image/png" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="images/app-icon-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)">
   <link rel="apple-touch-icon" href="images/app-icon.png">
   <link rel="stylesheet" href="css/app.css">
 </head>
@@ -21,7 +22,7 @@
   <header class="app-header">
     <div class="header-container">
       <a href="#" class="brand">
-        <img src="images/app-icon.png" alt="" class="brand-icon">
+        <picture class="app-icon-picture"><source srcset="images/app-icon-dark.svg" media="(prefers-color-scheme: dark)"><img src="images/app-icon.png" alt="" class="brand-icon"></picture>
         <span>PocketPic<small>One day at a time.</small></span>
       </a>
 
@@ -195,7 +196,7 @@
   <div class="modal-overlay lock-overlay active" id="passphrase-lock-overlay">
     <form class="lock-screen-box" id="unlock-form">
       <p class="eyebrow">YOUR DAILY PHOTO JOURNAL</p>
-      <img src="images/app-icon.png" alt="" class="lock-icon">
+      <picture class="app-icon-picture"><source srcset="images/app-icon-dark.svg" media="(prefers-color-scheme: dark)"><img src="images/app-icon.png" alt="" class="lock-icon"></picture>
       <h1 class="lock-title">A little change.<br>A bigger story.</h1>
       <p class="lock-intro">One photo a day. A life in the making.</p>
       <p id="unlock-passphrase-desc" class="muted">Enter your passphrase to open your journal.</p>

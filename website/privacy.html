@@ -6,7 +6,8 @@
   <meta name="description" content="PocketPic Privacy Policy — how we handle your photos, camera access, and on-device processing.">
   <meta name="theme-color" content="#eef0f4">
   <title>Privacy Policy — PocketPic</title>
-  <link rel="icon" href="images/favicon.png" type="image/png">
+  <link rel="icon" href="images/favicon.png" type="image/png" media="(prefers-color-scheme: light)">
+  <link rel="icon" href="images/app-icon-dark.svg" type="image/svg+xml" media="(prefers-color-scheme: dark)">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="css/app.css">
   <link rel="stylesheet" href="css/styles.css">
@@ -16,7 +17,7 @@
   <header class="site-header">
     <div class="container header-inner">
       <a href="index.html" class="logo">
-        <img src="images/app-icon.png" alt="" width="28" height="28">
+        <picture class="app-icon-picture"><source srcset="images/app-icon-dark.svg" media="(prefers-color-scheme: dark)"><img src="images/app-icon.png" alt="" width="28" height="28"></picture>
         PocketPic
       </a>
       <button class="menu-toggle" type="button" aria-label="Open menu" aria-expanded="false">

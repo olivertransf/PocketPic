@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="surface" x1="256" y1="0" x2="256" y2="512" gradientUnits="userSpaceOnUse"><stop stop-color="#30343c"/><stop offset="1" stop-color="#16191f"/></linearGradient>
+    <linearGradient id="mark" x1="64" y1="0" x2="192" y2="256" gradientUnits="userSpaceOnUse"><stop stop-color="#b0e1ff"/><stop offset=".5" stop-color="#69b9f1"/><stop offset="1" stop-color="#368dd7"/></linearGradient>
+    <linearGradient id="detail" x1="312" y1="116" x2="396" y2="200" gradientUnits="userSpaceOnUse"><stop stop-color="#e4eaf2"/><stop offset="1" stop-color="#8b99ad"/></linearGradient>
+  </defs>
+  <rect x="1" y="1" width="510" height="510" rx="112" fill="url(#surface)" stroke="#ffffff" stroke-opacity=".16" stroke-width="2"/>
+  <path d="M 128 0 C 57.308 0 0 57.308 0 128 C 0 198.692 57.308 256 128 256 C 198.692 256 256 198.692 256 128 L 224 128 C 224 181.019 181.019 224 128 224 C 74.98 224 32 181.019 32 128 C 32 74.98 74.98 32 128 32 Z M 128 56 C 88.236 56 56 88.236 56 128 C 56 167.764 88.236 200 128 200 C 167.764 200 200 167.764 200 128 L 168 128 C 168 150.091 150.091 168 128 168 C 105.909 168 88 150.091 88 128 C 88 105.909 105.909 88 128 88 Z" transform="translate(64 64) scale(1.5)" fill="url(#mark)"/>
+  <path d="M312 116h42l42 42h-42z M312 158h42l42 42h-42z" fill="url(#detail)"/>
+</svg>

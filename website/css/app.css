@@ -1405,3 +1405,8 @@ label.list-row {
 }
 
 .journal-stat small { font-size: 13px; font-weight: 400; letter-spacing: 0; color: var(--label-secondary); }
+
+/* Keep icon sizing and spacing consistent when the theme changes. */
+.app-icon-picture { display: inline-flex; flex-shrink: 0; }
+.lock-screen-box > .app-icon-picture { margin-bottom: 28px; }
+.lock-screen-box > .app-icon-picture .lock-icon { margin-bottom: 0; }
