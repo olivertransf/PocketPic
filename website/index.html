@@ -60,7 +60,7 @@
     </section>
 
     <section id="tab-camera" class="tab-pane">
-      <div class="page-header"><div><p class="eyebrow">A LITTLE EVERY DAY</p><h1 class="page-title">Today’s photo</h1><p class="page-subtitle">Same place. Same framing. A new day.</p></div><button class="btn btn-secondary" id="camera-back-btn">Back to Library</button></div>
+      <div class="page-header"><div><p class="eyebrow">A LITTLE EVERY DAY</p><h1 class="page-title">Today’s photo</h1><p class="page-subtitle">Same place. Same framing. A new day.</p></div><button class="btn btn-secondary" id="camera-back-btn">Done</button></div>
       <div class="camera-container">
         <p id="camera-status" class="camera-status" role="status" hidden></p>
         <div class="viewfinder-wrapper">
@@ -69,11 +69,14 @@
           <div id="camera-resolution-badge" class="camera-res-badge" style="display: none;"></div>
         </div>
 
+        <div class="camera-options">
+          <button class="btn camera-format-btn" id="camera-orientation-btn" aria-label="Photo format: landscape. Switch to portrait">▭ Landscape</button>
         <div class="opacity-slider-box">
           <span class="slider-label">Ghost overlay</span>
           <input type="range" id="camera-opacity-range" min="0.1" max="1.0" step="0.05" value="0.4" aria-label="Ghost overlay opacity">
         </div>
 
+        </div>
         <div class="camera-controls">
           <button class="icon-btn camera-tool-btn" id="camera-switch-btn" title="Switch camera" aria-label="Switch camera">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>
@@ -208,6 +211,7 @@
     </form>
   </div>
 
+  <div id="app-toast" class="app-toast" role="status" aria-live="polite" hidden></div>
   <script src="js/auth.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/camera.js"></script>

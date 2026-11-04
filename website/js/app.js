@@ -24,7 +24,7 @@ const App = {
     const videoEl = document.getElementById('viewfinder-video');
     const overlayCanvasEl = document.getElementById('overlay-canvas');
     if (videoEl && overlayCanvasEl) {
-      Camera.init(videoEl, overlayCanvasEl).catch(e => console.warn('Camera init warning:', e));
+      await Camera.init(videoEl, overlayCanvasEl).catch(e => console.warn('Camera init warning:', e));
     }
 
     await this.checkAuth();
@@ -134,12 +134,16 @@ const App = {
     });
 
     window.addEventListener('pocketpic:sync-status', () => {
-      if (this.isUnlocked && this.galleryReady) Gallery.render();
+      if (this.isUnlocked && this.galleryReady) Gallery.updateSyncStatus();
       this.renderSyncStatus();
     });
 
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && this.isUnlocked) Storage.sync().catch(() => {});
+      if (document.visibilityState === 'hidden') Camera.stopSession();
+      if (document.visibilityState === 'visible' && this.isUnlocked) {
+        Storage.sync().catch(() => {});
+        if (this.currentTab === 'camera') this.switchTab('camera');
+      }
     });
 
     window.addEventListener('online', () => {
@@ -150,7 +154,11 @@ const App = {
   startSyncTimer() {
     this.stopSyncTimer();
     this.syncTimer = setInterval(() => {
-      if (document.visibilityState === 'visible' && this.isUnlocked) Storage.sync().catch(() => {});
+      if (document.visibilityState === 'hidden') Camera.stopSession();
+      if (document.visibilityState === 'visible' && this.isUnlocked) {
+        Storage.sync().catch(() => {});
+        if (this.currentTab === 'camera') this.switchTab('camera');
+      }
     }, SYNC_INTERVAL_MS);
   },
 
@@ -206,41 +214,58 @@ const App = {
     document.body.dataset.tab = tabName;
 
     if (tabName === 'camera' && this.isUnlocked) {
+      this.setCameraReady(false, 'Opening camera…');
       const started = await Camera.startSession();
-      if (this.currentTab !== 'camera' || !this.isUnlocked) { Camera.stopSession(); return; }
-      document.getElementById('camera-shutter-btn').disabled = !started;
-      const status = document.getElementById('camera-status');
-      status.hidden = started;
-      status.textContent = 'Camera unavailable. Allow camera access in your browser settings, then open Camera again. You can also import photos from your Library.';
+      if (this.currentTab !== 'camera' || !this.isUnlocked) return;
+      this.setCameraReady(started);
     } else {
       Camera.stopSession();
     }
 
-    if (tabName === 'export') {
-      const photos = await Storage.getAllPhotos();
-      document.getElementById('export-summary').textContent = photos.length
-        ? `${photos.length} photos · ${(photos.length / this.selectedFPS).toFixed(1)} seconds at ${this.selectedFPS} fps`
-        : 'Your time-lapse starts with a photo. Take or import photos in your Library first.';
-      document.getElementById('start-export-btn').disabled = photos.length === 0 || Exporter.isExporting;
-    }
+    if (tabName === 'export') await this.updateExportSummary();
 
     if (tabName === 'library' && this.galleryReady) {
       await Gallery.refresh();
     }
   },
 
+  async updateExportSummary() {
+    const photos = await Storage.getAllPhotos();
+    document.getElementById('export-summary').textContent = photos.length
+      ? `${photos.length} photos · ${(photos.length / this.selectedFPS).toFixed(1)} seconds at ${this.selectedFPS} fps`
+      : 'Your time-lapse starts with a photo. Take or import photos in your Library first.';
+    document.getElementById('start-export-btn').disabled = photos.length === 0 || Exporter.isExporting;
+  },
+
+  setCameraReady(ready, message = '') {
+    document.getElementById('camera-shutter-btn').disabled = !ready;
+    const status = document.getElementById('camera-status');
+    status.hidden = ready;
+    status.textContent = message || 'Allow camera access in your browser settings, then reopen Camera. You can also import photos in Library.';
+  },
+
+  toast(message) {
+    const toast = document.getElementById('app-toast');
+    clearTimeout(this.toastTimer);
+    toast.textContent = message;
+    toast.hidden = false;
+    this.toastTimer = setTimeout(() => { toast.hidden = true; }, 2800);
+  },
+
   bindCameraControls() {
     document.getElementById('camera-back-btn')?.addEventListener('click', () => this.switchTab('library'));
+    document.getElementById('camera-orientation-btn')?.addEventListener('click', () => Camera.togglePhotoOrientation());
     const shutterBtn = document.getElementById('camera-shutter-btn');
     if (shutterBtn) {
       shutterBtn.addEventListener('click', async () => {
+        if (shutterBtn.disabled || !this.isUnlocked) return;
         const frameCanvas = Camera.captureFrame();
         if (!frameCanvas) return;
 
         const viewfinder = document.querySelector('.viewfinder-wrapper');
         if (viewfinder) {
-          viewfinder.style.opacity = '0.3';
-          setTimeout(() => { viewfinder.style.opacity = '1'; }, 100);
+          viewfinder.classList.add('capturing');
+          setTimeout(() => viewfinder.classList.remove('capturing'), 180);
         }
 
         shutterBtn.disabled = true;
@@ -248,24 +273,34 @@ const App = {
           await Storage.savePhoto(frameCanvas);
           await Camera.updateGhostOverlay();
           await this.switchTab('library');
+          this.toast('Photo saved');
         } catch (e) {
-          alert(`Could not save photo: ${e.message}`);
+          this.toast(`Could not save photo: ${e.message}`);
         } finally {
-          shutterBtn.disabled = false;
+          shutterBtn.disabled = !Camera.stream;
         }
       });
     }
 
-    document.getElementById('camera-switch-btn')?.addEventListener('click', async () => {
-      await Camera.switchCamera();
+    document.getElementById('camera-switch-btn')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      if (button.disabled) return;
+      button.disabled = true;
+      this.setCameraReady(false, 'Switching camera…');
+      try {
+        const started = await Camera.switchCamera();
+        if (this.currentTab === 'camera' && this.isUnlocked) this.setCameraReady(started);
+      } finally { button.disabled = false; }
     });
 
     const toggleOverlayBtn = document.getElementById('camera-overlay-btn');
     if (toggleOverlayBtn) {
       toggleOverlayBtn.classList.toggle('active', Camera.isOverlayVisible);
+      toggleOverlayBtn.setAttribute('aria-pressed', String(Camera.isOverlayVisible));
       toggleOverlayBtn.addEventListener('click', () => {
         const isVisible = Camera.toggleOverlay();
         toggleOverlayBtn.classList.toggle('active', isVisible);
+        toggleOverlayBtn.setAttribute('aria-pressed', String(isVisible));
       });
     }
 
@@ -345,7 +380,7 @@ const App = {
         btn.classList.add('active');
         selectedFPS = parseInt(btn.dataset.fps, 10);
         this.selectedFPS = selectedFPS;
-        this.switchTab('export');
+        this.updateExportSummary();
       });
     });
 

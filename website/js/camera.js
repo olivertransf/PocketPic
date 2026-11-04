@@ -1,6 +1,6 @@
 //
 // Camera module for PocketPic Web
-// Manages full-sensor high resolution camera capture (ideal 3840x2160 matching macOS photo preset and ImageCapture API), camera switching, live viewfinder, ghost alignment overlay, and snapping photos.
+// Keeps the selected photo format, live preview, ghost overlay, and saved crop consistent across devices.
 //
 
 const Camera = {
@@ -15,6 +15,9 @@ const Camera = {
   overlayObjectUrl: null,
   isOverlayVisible: true,
   imageCapture: null,
+  sessionVersion: 0,
+  photoOrientation: 'landscape',
+  mirrored: true,
 
   async init(videoEl, overlayCanvasEl) {
     this.videoElement = videoEl;
@@ -22,10 +25,15 @@ const Camera = {
     try {
       if (window.Storage) {
         this.overlayOpacity = (await Storage.getSetting('overlayOpacity', 0.4));
+        const orientation = await Storage.getSetting('photoOrientation', 'landscape');
+        this.photoOrientation = orientation === 'portrait' ? 'portrait' : 'landscape';
       }
     } catch (e) {
       console.warn('Storage overlayOpacity setting load error:', e);
     }
+    this.videoElement.addEventListener('resize', () => this.adjustViewfinderAspect());
+    this.videoElement.addEventListener('loadedmetadata', () => this.adjustViewfinderAspect());
+    this.adjustViewfinderAspect();
     await this.enumerateDevices();
   },
 
@@ -48,93 +56,93 @@ const Camera = {
   },
 
   async startSession(facingMode = null, deviceId = null) {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      console.warn('getUserMedia API not supported in this environment');
-      return false;
-    }
-
+    this.stopSession();
+    const version = this.sessionVersion;
+    if (!navigator.mediaDevices?.getUserMedia) return false;
     if (facingMode) this.facingMode = facingMode;
     if (deviceId) this.currentDeviceId = deviceId;
 
-    this.stopSession();
-
-    // Balanced high-resolution camera constraints compatible with all browser and mobile sensors
-    const constraints = {
-      video: {
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      }
-    };
-
-    if (this.currentDeviceId) {
-      constraints.video.deviceId = { exact: this.currentDeviceId };
-    } else if (this.facingMode) {
-      constraints.video.facingMode = this.facingMode;
-    }
-
+    const source = this.currentDeviceId
+      ? { deviceId: { exact: this.currentDeviceId } }
+      : { facingMode: { ideal: this.facingMode } };
+    let stream;
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-      if (this.videoElement) {
-        this.videoElement.srcObject = this.stream;
-        await this.videoElement.play();
-        this.videoElement.style.transform = (this.facingMode === 'user' && !this.currentDeviceId) ? 'scaleX(-1)' : 'none';
-
-        // Listen to loadedmetadata to adjust aspect ratio container dynamically
-        this.videoElement.onloadedmetadata = () => {
-          this.adjustViewfinderAspect();
-        };
-        this.adjustViewfinderAspect();
-      }
-
-      // Initialize ImageCapture API if available
-      const videoTrack = this.stream.getVideoTracks()[0];
-      if (videoTrack && 'ImageCapture' in window) {
-        try {
-          this.imageCapture = new window.ImageCapture(videoTrack);
-        } catch (e) {
-          this.imageCapture = null;
-        }
-      }
-
-      await this.enumerateDevices();
-      await this.updateGhostOverlay();
-      this.updateResolutionBadge();
-      return true;
-    } catch (e) {
-      console.error('High-res camera access error, trying fallback:', e);
       try {
-        this.stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        if (this.videoElement) {
-          this.videoElement.srcObject = this.stream;
-          await this.videoElement.play();
-        }
-        this.updateResolutionBadge();
-        return true;
-      } catch (err) {
-        console.error('Fallback camera failed:', err);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { ...source, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false
+        });
+      } catch (error) {
+        // Do not prompt again after a permission denial or start a different camera.
+        if (!['OverconstrainedError', 'NotFoundError'].includes(error.name)) throw error;
+        if (version !== this.sessionVersion) return false;
+        stream = await navigator.mediaDevices.getUserMedia({ video: source, audio: false });
+      }
+      if (version !== this.sessionVersion) {
+        stream.getTracks().forEach(track => track.stop());
         return false;
       }
+      this.stream = stream;
+      const track = stream.getVideoTracks()[0];
+      const settings = track?.getSettings?.() || {};
+      this.currentDeviceId = settings.deviceId || this.currentDeviceId;
+      this.mirrored = settings.facingMode ? settings.facingMode === 'user' : this.facingMode === 'user';
+      this.videoElement.style.transform = this.mirrored ? 'scaleX(-1)' : 'none';
+      this.videoElement.srcObject = stream;
+      await this.videoElement.play();
+      if (version !== this.sessionVersion) return false;
+      this.adjustViewfinderAspect();
+      await this.enumerateDevices();
+      await this.updateGhostOverlay();
+      return version === this.sessionVersion;
+    } catch (error) {
+      stream?.getTracks().forEach(track => track.stop());
+      if (version === this.sessionVersion) this.stopSession();
+      console.warn('Camera unavailable:', error);
+      return false;
     }
+  },
+
+  get captureRatio() {
+    return this.photoOrientation === 'portrait' ? 3 / 4 : 4 / 3;
+  },
+
+  async togglePhotoOrientation() {
+    this.photoOrientation = this.photoOrientation === 'landscape' ? 'portrait' : 'landscape';
+    this.adjustViewfinderAspect();
+    await Storage.setSetting('photoOrientation', this.photoOrientation);
   },
 
   adjustViewfinderAspect() {
     if (!this.videoElement) return;
-    const wrapper = this.videoElement.closest('.viewfinder-wrapper');
-    if (wrapper) {
-      const w = this.videoElement.videoWidth;
-      const h = this.videoElement.videoHeight;
-      if (w && h) {
-        wrapper.style.setProperty('--vf-ratio', String(w / h));
-      }
+    this.videoElement.closest('.viewfinder-wrapper')?.style.setProperty('--vf-ratio', String(this.captureRatio));
+    const button = document.getElementById('camera-orientation-btn');
+    if (button) {
+      button.textContent = this.photoOrientation === 'landscape' ? '▭ Landscape' : '▯ Portrait';
+      button.setAttribute('aria-label', `Photo format: ${this.photoOrientation}. Switch to ${this.photoOrientation === 'landscape' ? 'portrait' : 'landscape'}`);
     }
+    this.updateResolutionBadge();
     this.renderOverlay();
+  },
+
+  cropRect() {
+    const width = this.videoElement?.videoWidth || 0;
+    const height = this.videoElement?.videoHeight || 0;
+    if (!width || !height) return null;
+    const cropWidth = Math.min(width, height * this.captureRatio);
+    const cropHeight = cropWidth / this.captureRatio;
+    return {
+      x: (width - cropWidth) / 2, y: (height - cropHeight) / 2,
+      width: cropWidth, height: cropHeight,
+      outputWidth: Math.round(cropWidth), outputHeight: Math.round(cropHeight)
+    };
   },
 
   updateResolutionBadge() {
     const badge = document.getElementById('camera-resolution-badge');
     if (badge && this.videoElement) {
-      const w = this.videoElement.videoWidth || 0;
-      const h = this.videoElement.videoHeight || 0;
+      const crop = this.cropRect();
+      const w = crop?.outputWidth || 0;
+      const h = crop?.outputHeight || 0;
       if (w && h) {
         badge.textContent = `${w} × ${h}`;
         badge.style.display = 'inline-block';
@@ -145,6 +153,7 @@ const Camera = {
   },
 
   stopSession() {
+    this.sessionVersion++;
     if (this.stream) {
       this.stream.getTracks().forEach(track => track.stop());
       this.stream = null;
@@ -156,13 +165,13 @@ const Camera = {
   },
 
   async switchCamera() {
-    if (this.availableDevices.length > 1) {
-      const currentIndex = this.availableDevices.findIndex(d => d.deviceId === this.currentDeviceId);
-      const nextIndex = (currentIndex + 1) % this.availableDevices.length;
-      this.currentDeviceId = this.availableDevices[nextIndex].deviceId;
-    } else {
+    // Phones may expose several lenses for the same facing direction.
+    if (window.matchMedia('(pointer: coarse)').matches || this.availableDevices.length < 2) {
       this.facingMode = this.facingMode === 'user' ? 'environment' : 'user';
       this.currentDeviceId = null;
+    } else {
+      const index = this.availableDevices.findIndex(device => device.deviceId === this.currentDeviceId);
+      this.currentDeviceId = this.availableDevices[(index + 1) % this.availableDevices.length].deviceId;
     }
     return this.startSession();
   },
@@ -170,6 +179,8 @@ const Camera = {
   async setOverlayPhoto(blobOrUrl) {
     if (!blobOrUrl) {
       this.overlayImage = null;
+      if (this.overlayObjectUrl) URL.revokeObjectURL(this.overlayObjectUrl);
+      this.overlayObjectUrl = null;
       this.clearOverlay();
       return;
     }
@@ -232,11 +243,12 @@ const Camera = {
     const canvas = this.overlayCanvas;
     const ctx = canvas.getContext('2d');
 
-    const videoW = this.videoElement.videoWidth || this.videoElement.clientWidth || 1920;
-    const videoH = this.videoElement.videoHeight || this.videoElement.clientHeight || 1080;
+    const crop = this.cropRect();
+    const videoW = crop?.outputWidth || 800;
+    const videoH = crop?.outputHeight || Math.round(800 / this.captureRatio);
 
-    canvas.width = videoW;
-    canvas.height = videoH;
+    if (canvas.width !== videoW) canvas.width = videoW;
+    if (canvas.height !== videoH) canvas.height = videoH;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -264,17 +276,7 @@ const Camera = {
   },
 
   async captureFrameBlob() {
-    // 1. Try ImageCapture API first for max native camera sensor resolution
-    if (this.imageCapture && typeof this.imageCapture.takePhoto === 'function') {
-      try {
-        const photoBlob = await this.imageCapture.takePhoto();
-        if (photoBlob) return photoBlob;
-      } catch (e) {
-        console.warn('ImageCapture takePhoto error, falling back to canvas buffer:', e);
-      }
-    }
-
-    // 2. Fallback to Canvas element buffer drawing
+    // Use the same crop and mirroring as the preview in every browser.
     const canvas = this.captureFrame();
     if (!canvas) return null;
 
@@ -289,19 +291,16 @@ const Camera = {
     const video = this.videoElement;
     const canvas = document.createElement('canvas');
 
-    // Full video stream resolution (matching macOS high res capture up to 3840x2160)
-    canvas.width = video.videoWidth || 3840;
-    canvas.height = video.videoHeight || 2160;
-
+    const crop = this.cropRect();
+    if (!crop) return null;
+    canvas.width = crop.outputWidth;
+    canvas.height = crop.outputHeight;
     const ctx = canvas.getContext('2d');
-
-    // Flip horizontally if front camera view is mirrored
-    if (this.facingMode === 'user' && !this.currentDeviceId) {
+    if (this.mirrored) {
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
     }
-
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
     return canvas;
   }
 };

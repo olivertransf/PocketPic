@@ -26,17 +26,48 @@ const Gallery = {
       if (e.key === 'ArrowLeft') document.getElementById('detail-prev-btn')?.click();
       if (e.key === 'ArrowRight') document.getElementById('detail-next-btn')?.click();
     });
+    document.addEventListener('click', (event) => {
+      document.querySelectorAll('.library-more[open]').forEach(menu => {
+        if (!menu.contains(event.target)) menu.open = false;
+      });
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') document.querySelectorAll('.library-more[open]').forEach(menu => { menu.open = false; });
+    });
     await this.refresh();
   },
 
   async refresh() {
-    if (window.Storage) {
-      this.photos = await Storage.getAllPhotos();
-    } else {
-      this.photos = [];
-    }
+    const photos = window.Storage ? await Storage.getAllPhotos() : [];
+    const signature = new Date().toDateString() + '|' + photos.map(photo => [photo.id, photo.date, photo.dateSource, photo.updatedAt, photo.pending, photo.blob?.size].join(':')).join('|');
+    this.photos = photos;
     this.pruneObjectUrls();
-    this.render();
+    if (signature !== this.photoSignature || !this.containerElement?.firstElementChild) {
+      this.photoSignature = signature;
+      this.render();
+    } else {
+      this.updateSyncStatus();
+    }
+  },
+
+  updateSyncStatus() {
+    const button = document.getElementById('gallery-sync');
+    if (button) {
+      button.title = Storage.syncMessage || this.syncLabel();
+      button.setAttribute('aria-label', this.syncLabel());
+      button.classList.toggle('sync-error', Storage.syncState === 'error');
+      button.querySelector('svg')?.classList.toggle('spin', Storage.syncState === 'syncing');
+    }
+    const subtitle = document.getElementById('gallery-subtitle');
+    if (subtitle) {
+      const { currentStreak } = this.calculateStreaks();
+      const total = Storage.syncTotal;
+      subtitle.textContent = Storage.syncState === 'syncing' && total > this.photos.length
+        ? `${this.photos.length} of ${total} photos · syncing…`
+        : `${this.photos.length} ${this.photos.length === 1 ? 'photo' : 'photos'}${currentStreak ? ` · ${currentStreak}-day streak` : ''}${Storage.syncState === 'error' ? ' · Sync failed' : ''}`;
+    }
+    // Only the initial empty/loading state needs replacement when sync changes.
+    if (!this.photos.length && this.emptySyncState !== Storage.syncState) this.render();
   },
 
   toDatetimeLocal(isoDateStr) {
@@ -182,7 +213,20 @@ const Gallery = {
     } else {
       this.selectedPhotoIds.add(photoId);
     }
-    this.render();
+    const tile = Array.from(this.containerElement.querySelectorAll('.mosaic-tile')).find(tile => tile.dataset.id === photoId);
+    if (tile) {
+      const holder = document.createElement('div');
+      holder.innerHTML = this.tileHtml(this.photos.find(photo => photo.id === photoId));
+      const replacement = holder.firstElementChild;
+      this.bindTile(replacement);
+      const focused = document.activeElement === tile;
+      tile.replaceWith(replacement);
+      if (focused) replacement.focus({ preventScroll: true });
+    }
+    const selected = this.selectedPhotoIds.size;
+    this.containerElement.querySelector('.selection-count').textContent = selected ? `${selected} Selected` : 'Select Items';
+    document.getElementById('gallery-delete-selected').disabled = selected === 0;
+    document.getElementById('gallery-select-all').textContent = selected === this.photos.length ? 'Deselect All' : 'Select All';
   },
 
   selectAll() {
@@ -255,6 +299,7 @@ const Gallery = {
 
   render() {
     if (!this.containerElement) return;
+    this.emptySyncState = Storage.syncState;
 
     const { currentStreak, longestStreak } = this.calculateStreaks();
     const count = this.photos.length;
@@ -272,28 +317,29 @@ const Gallery = {
 
     const subtitle = [
       countLabel,
-      currentStreak > 0 ? `${currentStreak}-day streak` : null,
-      longestStreak > 1 ? `best ${longestStreak}` : null
+      currentStreak > 0 ? `${currentStreak}-day streak` : null
     ].filter(Boolean).join(' · ');
 
     let html = `
       <div class="page-header">
         <div>
           <p class="eyebrow">ONE DAY AT A TIME</p><h1 class="page-title">Library</h1>
-          <p class="page-subtitle">${subtitle}${syncFailed ? ' · <span class="sync-error">Sync failed</span>' : ''}</p>
+          <p class="page-subtitle" id="gallery-subtitle">${subtitle}${syncFailed ? ' · <span class="sync-error">Sync failed</span>' : ''}</p>
         </div>
         <div class="toolbar">
           <button class="btn btn-primary" id="gallery-camera">＋ Take photo</button>
           <button class="btn btn-pill" id="gallery-import-btn" title="Import photos with preserved capture dates">Import</button>
           <input type="file" id="gallery-import-input" accept="image/*" multiple hidden>
-          <button class="icon-btn ${syncFailed ? 'sync-error' : ''}" id="gallery-sync" title="${Storage.syncMessage || this.syncLabel()}" aria-label="${this.syncLabel()}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="${syncing ? 'spin' : ''}"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg>
+          <details class="library-more"><summary aria-label="More library actions">•••</summary><div class="library-more-menu">
+          <button class="icon-btn ${syncFailed ? 'sync-error' : ''}" id="gallery-sync" title="${this.syncLabel()}" aria-label="${this.syncLabel()}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="${syncing ? 'spin' : ''}"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/></svg><span>Sync library</span>
           </button>
           <button class="icon-btn ${this.isPrivacyMode ? 'active' : ''}" id="gallery-privacy-toggle" title="${this.isPrivacyMode ? 'Show photos' : 'Hide photos'}" aria-label="${this.isPrivacyMode ? 'Show photos' : 'Hide photos'}">
             ${this.isPrivacyMode
               ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A9.7 9.7 0 0 1 12 5c6 0 9.5 7 9.5 7a16.6 16.6 0 0 1-2.6 3.5M6.6 6.6A16.4 16.4 0 0 0 2.5 12s3.5 7 9.5 7a9.4 9.4 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>'
-              : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>'}
+              : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>'}<span>${this.isPrivacyMode ? 'Show photos' : 'Hide photos'}</span>
           </button>
+          </div></details>
           ${count > 0 ? `
             <button class="btn btn-pill ${this.isSelectionMode ? 'active' : ''}" id="gallery-select-toggle">
               ${this.isSelectionMode ? 'Done' : 'Select'}
@@ -352,6 +398,8 @@ const Gallery = {
 
     this.containerElement.innerHTML = html;
     this.attachEvents();
+    const syncButton = document.getElementById('gallery-sync');
+    if (syncButton) syncButton.title = Storage.syncMessage || this.syncLabel();
   },
 
   monthSectionsHtml(photoGroups) {
